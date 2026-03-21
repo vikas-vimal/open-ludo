@@ -33,6 +33,59 @@ export type RoomState = {
   players: RoomPlayer[];
 };
 
+export type PlayerColor = 'RED' | 'GREEN' | 'YELLOW' | 'BLUE';
+export type TurnPhase = 'await_roll' | 'await_move' | 'finished';
+
+export type ValidMove = {
+  tokenIndex: number;
+  targetProgress: number;
+};
+
+export type DiceState = {
+  value: number | null;
+  rolledAt?: string;
+  isAuto: boolean;
+};
+
+export type PlayerGameState = {
+  userId: string;
+  displayName: string;
+  color: PlayerColor;
+  tokens: number[];
+  finishedRank?: number;
+};
+
+export type PlacementEntry = {
+  userId: string;
+  displayName: string;
+  color: PlayerColor;
+  place: number;
+};
+
+export type GameState = {
+  roomCode: string;
+  status: 'playing' | 'finished';
+  players: PlayerGameState[];
+  currentTurnIndex: number;
+  turnPhase: TurnPhase;
+  dice: DiceState;
+  validMoves: ValidMove[];
+  finishedOrder: string[];
+  turnDeadlineAt?: string;
+  lastUpdatedAt: string;
+};
+
+export type GameStatePayload = {
+  roomCode: string;
+  state: GameState;
+};
+
+export type GameEndPayload = {
+  roomCode: string;
+  state: GameState;
+  placements: PlacementEntry[];
+};
+
 export type ApiErrorCode =
   | 'AUTH_REQUIRED'
   | 'INVALID_TOKEN'
@@ -43,7 +96,12 @@ export type ApiErrorCode =
   | 'NOT_HOST'
   | 'INVALID_ROOM_CODE'
   | 'INVALID_MAX_PLAYERS'
-  | 'ROOM_NOT_WAITING';
+  | 'ROOM_NOT_WAITING'
+  | 'ROOM_NOT_PLAYING'
+  | 'GAME_NOT_STARTED'
+  | 'TURN_NOT_YOURS'
+  | 'INVALID_MOVE'
+  | 'NO_VALID_MOVE';
 
 export type ApiErrorResponse = {
   code: ApiErrorCode;
@@ -99,6 +157,9 @@ export type ClientToServerEvents = {
   join_room: (payload: { roomCode: string }) => void;
   leave_room: (payload: { roomCode: string }) => void;
   set_ready: (payload: { roomCode: string; ready: boolean }) => void;
+  start_game: (payload: { roomCode: string }) => void;
+  roll_dice: (payload: { roomCode: string }) => void;
+  move_token: (payload: { roomCode: string; tokenIndex: number }) => void;
 };
 
 export type ServerToClientEvents = {
@@ -106,6 +167,8 @@ export type ServerToClientEvents = {
   player_left: (payload: RoomState) => void;
   room_state: (payload: RoomState) => void;
   host_transferred: (payload: RoomState) => void;
+  state_update: (payload: GameStatePayload) => void;
+  game_end: (payload: GameEndPayload) => void;
   error: (payload: ApiErrorResponse) => void;
 };
 

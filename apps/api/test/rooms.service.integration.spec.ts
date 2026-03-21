@@ -2,13 +2,13 @@ import type { RoomState } from '@open-ludo/contracts';
 import { vi } from 'vitest';
 import { RoomsService } from '../src/rooms/rooms.service.js';
 
-function mockRoomState(code: string, hostUserId = 'u1'): RoomState {
+function mockRoomState(code: string, hostUserId = 'u1', status: RoomState['room']['status'] = 'waiting'): RoomState {
   return {
     room: {
       id: 'room-1',
       code,
       hostUserId,
-      status: 'waiting',
+      status,
       maxPlayers: 4,
       createdAt: new Date('2026-03-01T10:00:00.000Z').toISOString(),
     },
@@ -55,13 +55,18 @@ describe('RoomsService workflow', () => {
     connectedUserSet: vi.fn(),
   };
 
+  const gameEngine = {
+    initializeGame: vi.fn(),
+  };
+
   let service: RoomsService;
 
   beforeEach(() => {
     vi.resetAllMocks();
-    service = new RoomsService(prisma as never, redis as never);
+    service = new RoomsService(prisma as never, redis as never, gameEngine as never);
     prisma.room.update.mockResolvedValue({ id: 'room-1' });
     prisma.roomPlayer.upsert.mockResolvedValue({});
+    gameEngine.initializeGame.mockResolvedValue({ roomCode: 'ABC123', state: {} });
     prisma.$transaction.mockImplementation(async (input: unknown) => {
       if (typeof input === 'function') {
         return (input as (arg: unknown) => Promise<unknown>)({
@@ -121,5 +126,50 @@ describe('RoomsService workflow', () => {
     expect(redis.markDisconnected).toHaveBeenCalledWith('ABC123', 'u1');
     expect(result.hostTransferred).toBe(true);
     expect(result.roomState.room.hostUserId).toBe('u2');
+  });
+
+  it('requires at least 2 players before start and initializes game state', async () => {
+    prisma.room.findUnique
+      .mockResolvedValueOnce({
+        id: 'room-1',
+        code: 'ABC123',
+        hostUserId: 'u1',
+        status: 'waiting',
+        players: [
+          {
+            userId: 'u1',
+            user: { displayName: 'Host' },
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        id: 'room-1',
+        code: 'ABC123',
+        hostUserId: 'u1',
+        status: 'waiting',
+        players: [
+          { userId: 'u1', user: { displayName: 'Host' } },
+          { userId: 'u2', user: { displayName: 'Guest' } },
+        ],
+      });
+
+    await expect(service.startRoom('u1', 'ABC123')).rejects.toMatchObject({
+      response: { code: 'INVALID_MOVE' },
+    });
+
+    vi.spyOn(service as any, 'getRoomStateOrThrow').mockResolvedValue(
+      mockRoomState('ABC123', 'u1', 'playing'),
+    );
+    const started = await service.startRoom('u1', 'ABC123');
+
+    expect(started.room.status).toBe('playing');
+    expect(prisma.room.update).toHaveBeenCalledWith({
+      where: { id: 'room-1' },
+      data: { status: 'playing' },
+    });
+    expect(gameEngine.initializeGame).toHaveBeenCalledWith('ABC123', [
+      { userId: 'u1', displayName: 'Host' },
+      { userId: 'u2', displayName: 'Guest' },
+    ]);
   });
 });

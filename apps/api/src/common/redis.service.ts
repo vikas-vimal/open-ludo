@@ -44,6 +44,27 @@ export class RedisService implements OnModuleDestroy {
     return new Set(members);
   }
 
+  async setJson<T>(key: string, value: T, ttlSeconds?: number): Promise<void> {
+    const encoded = JSON.stringify(value);
+    if (ttlSeconds && ttlSeconds > 0) {
+      await this.redis.set(key, encoded, 'EX', ttlSeconds);
+      return;
+    }
+    await this.redis.set(key, encoded);
+  }
+
+  async getJson<T>(key: string): Promise<T | null> {
+    const encoded = await this.redis.get(key);
+    if (!encoded) {
+      return null;
+    }
+    return JSON.parse(encoded) as T;
+  }
+
+  async deleteKey(key: string): Promise<void> {
+    await this.redis.del(key);
+  }
+
   async onModuleDestroy(): Promise<void> {
     this.redis.disconnect();
   }

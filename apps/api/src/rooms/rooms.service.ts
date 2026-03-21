@@ -3,6 +3,7 @@ import type { RoomState } from '@open-ludo/contracts';
 import { ApiException } from '../common/errors.js';
 import { PrismaService } from '../common/prisma.service.js';
 import { RedisService } from '../common/redis.service.js';
+import { GameEngineService } from '../game/game-engine.service.js';
 import { electNextHost } from './host-transfer.util.js';
 import { generateRoomCode, isValidRoomCode, normalizeRoomCode } from './room-code.util.js';
 
@@ -11,6 +12,7 @@ export class RoomsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly redis: RedisService,
+    private readonly gameEngine: GameEngineService,
   ) {}
 
   async createRoom(userId: string, maxPlayers: 2 | 3 | 4): Promise<RoomState> {
@@ -78,10 +80,6 @@ export class RoomsService {
       throw new ApiException('ROOM_NOT_FOUND', 'Room does not exist.', HttpStatus.NOT_FOUND);
     }
 
-    if (room.status !== 'waiting') {
-      throw new ApiException('ROOM_NOT_WAITING', 'Room has already started.', HttpStatus.CONFLICT);
-    }
-
     const existing = await this.prisma.roomPlayer.findUnique({
       where: {
         roomId_userId: {
@@ -92,7 +90,15 @@ export class RoomsService {
     });
 
     const activeCount = room.players.length;
-    const existingIsActive = existing && existing.leftAt === null;
+    const existingIsActive = Boolean(existing && existing.leftAt === null);
+
+    if (room.status !== 'waiting') {
+      if (!existingIsActive) {
+        throw new ApiException('ROOM_NOT_WAITING', 'Room has already started.', HttpStatus.CONFLICT);
+      }
+      await this.redis.markConnected(roomCode, userId);
+      return this.getRoomStateOrThrow(roomCode);
+    }
 
     if (!existingIsActive && activeCount >= room.maxPlayers) {
       throw new ApiException('ROOM_FULL', 'Room is full.', HttpStatus.CONFLICT);
@@ -170,6 +176,9 @@ export class RoomsService {
   async setReady(userId: string, rawRoomCode: string, ready: boolean): Promise<RoomState> {
     const roomCode = normalizeRoomCode(rawRoomCode);
     const room = await this.requireRoomByCode(roomCode);
+    if (room.status !== 'waiting') {
+      throw new ApiException('ROOM_NOT_WAITING', 'Room is not waiting.', HttpStatus.CONFLICT);
+    }
 
     await this.ensurePlayerInRoom(room.id, userId);
 
@@ -193,7 +202,20 @@ export class RoomsService {
 
   async startRoom(userId: string, rawRoomCode: string): Promise<RoomState> {
     const roomCode = normalizeRoomCode(rawRoomCode);
-    const room = await this.requireRoomByCode(roomCode);
+    const room = await this.prisma.room.findUnique({
+      where: { code: roomCode },
+      include: {
+        players: {
+          where: { leftAt: null },
+          include: { user: true },
+          orderBy: { joinedAt: 'asc' },
+        },
+      },
+    });
+
+    if (!room) {
+      throw new ApiException('ROOM_NOT_FOUND', 'Room does not exist.', HttpStatus.NOT_FOUND);
+    }
 
     if (room.hostUserId !== userId) {
       throw new ApiException('NOT_HOST', 'Only host can start the match.', HttpStatus.FORBIDDEN);
@@ -203,10 +225,22 @@ export class RoomsService {
       throw new ApiException('ROOM_NOT_WAITING', 'Room is not waiting.', HttpStatus.CONFLICT);
     }
 
+    if (room.players.length < 2) {
+      throw new ApiException('INVALID_MOVE', 'At least 2 players are required to start.', HttpStatus.CONFLICT);
+    }
+
     await this.prisma.room.update({
       where: { id: room.id },
       data: { status: 'playing' },
     });
+
+    await this.gameEngine.initializeGame(
+      roomCode,
+      room.players.map((player) => ({
+        userId: player.userId,
+        displayName: player.user.displayName,
+      })),
+    );
 
     return this.getRoomStateOrThrow(roomCode);
   }
