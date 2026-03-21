@@ -1,0 +1,19 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "types": ["node", "jest"],
+    "outDir": "dist",
+    "baseUrl": ".",
+    "paths": {
+      "@open-ludo/contracts": ["../../packages/contracts/src/index.ts"],
+      "@open-ludo/contracts/*": ["../../packages/contracts/src/*"]
+    },
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts"]
+}

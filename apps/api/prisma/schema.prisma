@@ -1,0 +1,72 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserKind {
+  guest
+  registered
+}
+
+enum RoomStatus {
+  waiting
+  playing
+  finished
+}
+
+model User {
+  id          String   @id @default(cuid())
+  externalId  String   @unique
+  kind        UserKind
+  email       String?
+  displayName String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  wallet      Wallet?
+  roomPlayers RoomPlayer[]
+  hostedRooms Room[]      @relation("RoomHost")
+}
+
+model Wallet {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  coinBalance Int      @default(1000)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Room {
+  id         String      @id @default(cuid())
+  code       String      @unique
+  hostUserId String
+  status     RoomStatus  @default(waiting)
+  maxPlayers Int
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+
+  host       User        @relation("RoomHost", fields: [hostUserId], references: [id])
+  players    RoomPlayer[]
+}
+
+model RoomPlayer {
+  id         String   @id @default(cuid())
+  roomId     String
+  userId     String
+  isHost     Boolean  @default(false)
+  isReady    Boolean  @default(false)
+  joinedAt   DateTime @default(now())
+  leftAt     DateTime?
+
+  room       Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([roomId, userId])
+  @@index([roomId])
+}

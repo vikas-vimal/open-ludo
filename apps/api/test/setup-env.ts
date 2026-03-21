@@ -1,0 +1,10 @@
+process.env.NODE_ENV = 'test';
+process.env.PORT = '8080';
+process.env.WEB_ORIGIN = 'http://localhost:3000';
+process.env.DATABASE_URL = 'postgresql://postgres:postgres@localhost:5432/open_ludo_test';
+process.env.REDIS_URL = 'redis://localhost:6379';
+process.env.GUEST_JWT_SECRET = 'guest-secret-key-guest-secret-key';
+process.env.GUEST_JWT_EXPIRES_SECONDS = '86400';
+process.env.SUPABASE_JWT_SECRET = 'supabase-secret-key-supabase-secret-key';
+process.env.SUPABASE_JWT_ISSUER = 'https://test-project.supabase.co/auth/v1';
+process.env.SUPABASE_JWT_AUDIENCE = 'authenticated';

@@ -1,0 +1,118 @@
+:root {
+  --bg: #f7f4ea;
+  --bg-accent: #f2dfbb;
+  --surface: #fffdf8;
+  --ink: #231a1a;
+  --ink-soft: #5a4b44;
+  --brand: #da3e2b;
+  --brand-2: #0f8b8d;
+  --ring: #37271d;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+  font-family: 'Avenir Next', 'Nunito Sans', 'Segoe UI', sans-serif;
+  color: var(--ink);
+  background:
+    radial-gradient(circle at 10% 10%, rgba(15, 139, 141, 0.2), transparent 25%),
+    radial-gradient(circle at 90% 5%, rgba(218, 62, 43, 0.2), transparent 18%),
+    linear-gradient(180deg, var(--bg) 0%, var(--bg-accent) 100%);
+}
+
+a {
+  color: inherit;
+}
+
+main {
+  width: min(960px, 100% - 24px);
+  margin: 0 auto;
+  padding: 24px 0 40px;
+}
+
+.panel {
+  border: 2px solid var(--ring);
+  border-radius: 20px;
+  padding: 16px;
+  background: var(--surface);
+  box-shadow: 0 10px 24px rgba(23, 16, 10, 0.1);
+}
+
+.row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+button {
+  border: 2px solid var(--ring);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  padding: 10px 14px;
+  cursor: pointer;
+}
+
+button.primary {
+  background: var(--brand);
+  color: #fff9f5;
+  border-color: #5e190d;
+}
+
+button.secondary {
+  background: var(--brand-2);
+  color: #f7ffff;
+  border-color: #005153;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+input,
+select {
+  width: 100%;
+  border: 2px solid var(--ring);
+  border-radius: 12px;
+  padding: 10px 12px;
+  font: inherit;
+  background: #fff;
+}
+
+label {
+  display: block;
+  margin-bottom: 6px;
+  font-weight: 600;
+  color: var(--ink-soft);
+}
+
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
+
+.stack {
+  display: grid;
+  gap: 12px;
+}
+
+@media (max-width: 700px) {
+  main {
+    width: calc(100% - 16px);
+    padding-top: 16px;
+  }
+
+  .panel {
+    border-radius: 16px;
+  }
+}
