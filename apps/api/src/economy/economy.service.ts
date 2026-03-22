@@ -149,6 +149,7 @@ export class EconomyService {
           status: 'SETTLED',
           winnerUserId,
           settledAt: new Date(),
+          placementsJson: placements as unknown as Prisma.InputJsonValue,
         },
       });
 

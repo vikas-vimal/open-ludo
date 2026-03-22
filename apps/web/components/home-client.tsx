@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { api, ApiClientError } from '../lib/api';
 import { clearSession, readToken, readUser, saveSession } from '../lib/auth-store';
@@ -16,6 +16,9 @@ export function HomeClient(): JSX.Element {
   const [coinBalance, setCoinBalance] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [hasSupabase, setHasSupabase] = useState(false);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const guestTokenRef = useRef<string | null>(null);
 
   useEffect(() => {
     const storedToken = readToken();
@@ -26,6 +29,9 @@ export function HomeClient(): JSX.Element {
       setStatus(`Signed in as ${storedUser.displayName} (${storedUser.kind})`);
       setDisplayName(storedUser.displayName);
       setCoinBalance(storedUser.coinBalance);
+      if (storedUser.kind === 'guest') {
+        guestTokenRef.current = storedToken;
+      }
     }
 
     const supabase = getSupabaseClient();
@@ -40,20 +46,54 @@ export function HomeClient(): JSX.Element {
         return;
       }
 
-      setToken(accessToken);
-      try {
-        const me = await api.getMe(accessToken);
-        saveSession(accessToken, me.user);
-        setDisplayName(me.user.displayName);
-        setStatus(`Signed in as ${me.user.displayName} (${me.user.kind})`);
-        setCoinBalance(me.user.coinBalance);
-      } catch {
-        setStatus('Supabase session detected but API token validation failed.');
-      }
+      await syncRegisteredSession(accessToken, guestTokenRef.current);
     });
   }, []);
 
   const canCreate = useMemo(() => !loading && maxPlayers >= 2 && maxPlayers <= 4, [loading, maxPlayers]);
+
+  async function syncRegisteredSession(accessToken: string, guestToken: string | null): Promise<void> {
+    setToken(accessToken);
+
+    try {
+      const me = await api.getMe(accessToken);
+      let user = me.user;
+      let merged = false;
+
+      if (guestToken && me.user.kind === 'registered' && guestToken !== accessToken) {
+        try {
+          const upgrade = await api.upgradeGuest(guestToken, accessToken);
+          user = upgrade.user;
+          merged = upgrade.merged;
+        } catch (caught) {
+          if (
+            caught instanceof ApiClientError &&
+            ['GUEST_ALREADY_UPGRADED', 'UPGRADE_NOT_ALLOWED', 'GUEST_TOKEN_REQUIRED', 'INVALID_TOKEN'].includes(
+              caught.code,
+            )
+          ) {
+            // Ignore non-fatal upgrade cases and continue with registered session.
+          } else {
+            throw caught;
+          }
+        }
+      }
+
+      saveSession(accessToken, user);
+      setDisplayName(user.displayName);
+      setCoinBalance(user.coinBalance);
+      setStatus(
+        merged
+          ? `Signed in as ${user.displayName} (registered). Guest session merged.`
+          : `Signed in as ${user.displayName} (${user.kind})`,
+      );
+      if (user.kind === 'registered') {
+        guestTokenRef.current = null;
+      }
+    } catch {
+      setStatus('Supabase session detected but API token validation failed.');
+    }
+  }
 
   async function ensureGuestSession(): Promise<string> {
     const existing = token ?? readToken();
@@ -69,6 +109,7 @@ export function HomeClient(): JSX.Element {
     const result = await api.createGuest(trimmed);
     saveSession(result.accessToken, result.user);
     setToken(result.accessToken);
+    guestTokenRef.current = result.accessToken;
     setStatus(`Guest ready: ${result.user.displayName}`);
     setCoinBalance(result.user.coinBalance);
     return result.accessToken;
@@ -81,6 +122,7 @@ export function HomeClient(): JSX.Element {
       const result = await api.createGuest(trimmed);
       saveSession(result.accessToken, result.user);
       setToken(result.accessToken);
+      guestTokenRef.current = result.accessToken;
       setStatus(`Guest session created for ${result.user.displayName}`);
       setCoinBalance(result.user.coinBalance);
     } catch (error) {
@@ -132,6 +174,78 @@ export function HomeClient(): JSX.Element {
     }
   }
 
+  async function handleEmailSignUp(): Promise<void> {
+    const supabase = getSupabaseClient();
+    if (!supabase) {
+      setStatus('Supabase is not configured in NEXT_PUBLIC_SUPABASE_URL/ANON_KEY.');
+      return;
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!normalizedEmail || password.length < 6) {
+      setStatus('Enter a valid email and password (min 6 characters).');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const { data, error } = await supabase.auth.signUp({
+        email: normalizedEmail,
+        password,
+      });
+      if (error) {
+        setStatus(error.message);
+        return;
+      }
+
+      const accessToken = data.session?.access_token;
+      if (!accessToken) {
+        setStatus('Sign-up successful. Check your email to verify the account, then sign in.');
+        return;
+      }
+
+      await syncRegisteredSession(accessToken, guestTokenRef.current);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleEmailSignIn(): Promise<void> {
+    const supabase = getSupabaseClient();
+    if (!supabase) {
+      setStatus('Supabase is not configured in NEXT_PUBLIC_SUPABASE_URL/ANON_KEY.');
+      return;
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!normalizedEmail || password.length < 6) {
+      setStatus('Enter a valid email and password (min 6 characters).');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: normalizedEmail,
+        password,
+      });
+      if (error) {
+        setStatus(error.message);
+        return;
+      }
+
+      const accessToken = data.session?.access_token;
+      if (!accessToken) {
+        setStatus('Sign-in succeeded but no access token was returned.');
+        return;
+      }
+
+      await syncRegisteredSession(accessToken, guestTokenRef.current);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   return (
     <section className="panel stack">
       <h2>Start Playing</h2>
@@ -154,17 +268,54 @@ export function HomeClient(): JSX.Element {
         <button className="secondary" onClick={handleSignInWithGoogle} disabled={!hasSupabase || loading}>
           Sign In with Google
         </button>
+        <button onClick={() => router.push('/profile')} disabled={!token || loading}>
+          Profile
+        </button>
         <button
           onClick={() => {
             clearSession();
             setToken(null);
             setCoinBalance(null);
+            guestTokenRef.current = null;
             setStatus('Session cleared.');
           }}
           disabled={loading}
         >
           Clear Session
         </button>
+      </div>
+
+      <div className="panel stack" style={{ background: '#f7f8ff' }}>
+        <h3>Email Account</h3>
+        <div>
+          <label htmlFor="authEmail">Email</label>
+          <input
+            id="authEmail"
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+            placeholder="you@example.com"
+            autoComplete="email"
+          />
+        </div>
+        <div>
+          <label htmlFor="authPassword">Password</label>
+          <input
+            id="authPassword"
+            type="password"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            placeholder="At least 6 characters"
+            autoComplete="current-password"
+          />
+        </div>
+        <div className="row">
+          <button onClick={handleEmailSignIn} disabled={!hasSupabase || loading}>
+            Sign In with Email
+          </button>
+          <button className="secondary" onClick={handleEmailSignUp} disabled={!hasSupabase || loading}>
+            Sign Up with Email
+          </button>
+        </div>
       </div>
 
       <div className="panel stack" style={{ background: '#fffcf3' }}>

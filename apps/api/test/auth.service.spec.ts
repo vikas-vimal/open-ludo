@@ -5,13 +5,29 @@ import { AuthService } from '../src/auth/auth.service.js';
 describe('AuthService', () => {
   const usersService = {
     ensureUserFromAuth: vi.fn(),
+    mergeGuestIntoRegistered: vi.fn(),
+    getById: vi.fn(),
   };
 
   let service: AuthService;
 
   beforeEach(() => {
     usersService.ensureUserFromAuth.mockReset();
-    usersService.ensureUserFromAuth.mockResolvedValue({ id: 'db-user-1', coinBalance: 1000 });
+    usersService.mergeGuestIntoRegistered.mockReset();
+    usersService.getById.mockReset();
+    usersService.ensureUserFromAuth.mockImplementation(async (auth: { userKind: 'guest' | 'registered' }) => ({
+      id: auth.userKind === 'guest' ? 'guest-db-user' : 'registered-db-user',
+      coinBalance: 1000,
+    }));
+    usersService.mergeGuestIntoRegistered.mockResolvedValue({ merged: true });
+    usersService.getById.mockResolvedValue({
+      id: 'registered-db-user',
+      displayName: 'Sam',
+      kind: 'registered',
+      email: 'sam@example.com',
+      coinBalance: 1400,
+      avatarKey: 'pawn_blue',
+    });
     service = new AuthService(usersService as never);
   });
 
@@ -34,7 +50,7 @@ describe('AuthService', () => {
     const guest = await service.createGuest('Aisha');
     const authenticated = await service.authenticateToken(guest.accessToken);
 
-    expect(authenticated.userId).toBe('db-user-1');
+    expect(authenticated.userId).toBe('guest-db-user');
     expect(authenticated.auth.userKind).toBe('guest');
     expect(authenticated.auth.tokenIssuer).toBe('guest');
     expect(authenticated.auth.displayName).toBe('Aisha');
@@ -71,5 +87,42 @@ describe('AuthService', () => {
       const response = (error as { getResponse: () => { code?: string } }).getResponse();
       expect(response.code).toBe('INVALID_TOKEN');
     }
+  });
+
+  it('upgrades guest session into registered account and preserves merged balance', async () => {
+    const guest = await service.createGuest('Aisha');
+    const upgraded = await service.upgradeGuestToRegistered(
+      'registered-db-user',
+      {
+        subjectId: 'supa-user-123',
+        userKind: 'registered',
+        displayName: 'Sam',
+        tokenIssuer: 'supabase',
+      },
+      guest.accessToken,
+    );
+
+    expect(usersService.mergeGuestIntoRegistered).toHaveBeenCalledWith('guest-db-user', 'registered-db-user');
+    expect(upgraded.merged).toBe(true);
+    expect(upgraded.user.coinBalance).toBe(1400);
+    expect(upgraded.user.avatarKey).toBe('pawn_blue');
+  });
+
+  it('returns merged=false when guest was already upgraded', async () => {
+    usersService.mergeGuestIntoRegistered.mockResolvedValueOnce({ merged: false });
+    const guest = await service.createGuest('Aisha');
+
+    const upgraded = await service.upgradeGuestToRegistered(
+      'registered-db-user',
+      {
+        subjectId: 'supa-user-123',
+        userKind: 'registered',
+        displayName: 'Sam',
+        tokenIssuer: 'supabase',
+      },
+      guest.accessToken,
+    );
+
+    expect(upgraded.merged).toBe(false);
   });
 });

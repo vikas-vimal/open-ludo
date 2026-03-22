@@ -2,9 +2,13 @@ import type {
   ApiErrorResponse,
   CreateGuestResponse,
   CreateRoomResponse,
+  GetMyProfileResponse,
   GetMeResponse,
   JoinRoomResponse,
   StartRoomResponse,
+  UpdateMyProfileRequest,
+  UpdateMyProfileResponse,
+  UpgradeGuestResponse,
 } from '@open-ludo/contracts';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080';
@@ -54,6 +58,14 @@ export const api = {
     });
   },
 
+  upgradeGuest(guestAccessToken: string, token: string): Promise<UpgradeGuestResponse> {
+    return request('/v1/auth/upgrade', {
+      method: 'POST',
+      token,
+      body: JSON.stringify({ guestAccessToken }),
+    });
+  },
+
   createRoom(maxPlayers: 2 | 3 | 4, token: string): Promise<CreateRoomResponse> {
     return request('/v1/rooms', {
       method: 'POST',
@@ -87,6 +99,20 @@ export const api = {
     return request(`/v1/rooms/${roomCode}/start`, {
       method: 'POST',
       token,
+    });
+  },
+
+  getMyProfile(token: string): Promise<GetMyProfileResponse> {
+    return request('/v1/profile/me', {
+      token,
+    });
+  },
+
+  updateMyProfile(payload: UpdateMyProfileRequest, token: string): Promise<UpdateMyProfileResponse> {
+    return request('/v1/profile/me', {
+      method: 'PATCH',
+      token,
+      body: JSON.stringify(payload),
     });
   },
 };

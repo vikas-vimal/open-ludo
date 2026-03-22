@@ -1,5 +1,5 @@
 import { HttpStatus, Injectable } from '@nestjs/common';
-import type { AuthContext, CreateGuestResponse } from '@open-ludo/contracts';
+import type { AuthContext, CreateGuestResponse, UpgradeGuestResponse } from '@open-ludo/contracts';
 import jwt, { JsonWebTokenError, JwtPayload } from 'jsonwebtoken';
 import { randomUUID } from 'node:crypto';
 import { ApiException } from '../common/errors.js';
@@ -75,15 +75,7 @@ export class AuthService {
 
   async authenticateToken(token: string): Promise<{ auth: AuthContext; userId: string }> {
     try {
-      const guestClaims = this.verifyGuestToken(token);
-      const auth: AuthContext = {
-        subjectId: guestClaims.sub,
-        userKind: 'guest',
-        displayName: guestClaims.displayName,
-        tokenIssuer: 'guest',
-      };
-      const user = await this.usersService.ensureUserFromAuth(auth);
-      return { auth, userId: user.id };
+      return await this.authenticateGuestToken(token);
     } catch (error) {
       if (!(error instanceof JsonWebTokenError)) {
         throw error;
@@ -104,6 +96,57 @@ export class AuthService {
     } catch {
       throw new ApiException('INVALID_TOKEN', 'Authentication token is invalid.', HttpStatus.UNAUTHORIZED);
     }
+  }
+
+  async authenticateGuestToken(token: string): Promise<{ auth: AuthContext; userId: string }> {
+    const guestClaims = this.verifyGuestToken(token);
+    const auth: AuthContext = {
+      subjectId: guestClaims.sub,
+      userKind: 'guest',
+      displayName: guestClaims.displayName,
+      tokenIssuer: 'guest',
+    };
+    const user = await this.usersService.ensureUserFromAuth(auth);
+    return { auth, userId: user.id };
+  }
+
+  async upgradeGuestToRegistered(
+    registeredUserId: string,
+    registeredAuth: AuthContext,
+    guestAccessToken: string,
+  ): Promise<UpgradeGuestResponse> {
+    if (registeredAuth.userKind !== 'registered') {
+      throw new ApiException('UPGRADE_NOT_ALLOWED', 'Guest sessions can only upgrade into registered accounts.', 409);
+    }
+
+    let guestAuthResult: { auth: AuthContext; userId: string };
+    try {
+      guestAuthResult = await this.authenticateGuestToken(guestAccessToken);
+    } catch {
+      throw new ApiException('GUEST_TOKEN_REQUIRED', 'A valid guest token is required.', HttpStatus.UNAUTHORIZED);
+    }
+
+    if (guestAuthResult.userId === registeredUserId) {
+      throw new ApiException('UPGRADE_NOT_ALLOWED', 'Guest and registered identities cannot be the same user.', 409);
+    }
+
+    const merge = await this.usersService.mergeGuestIntoRegistered(guestAuthResult.userId, registeredUserId);
+    const user = await this.usersService.getById(registeredUserId);
+    if (!user) {
+      throw new ApiException('INVALID_TOKEN', 'Authenticated user not found', HttpStatus.UNAUTHORIZED);
+    }
+
+    return {
+      merged: merge.merged,
+      user: {
+        id: user.id,
+        displayName: user.displayName,
+        coinBalance: user.coinBalance,
+        kind: user.kind,
+        email: user.email ?? undefined,
+        avatarKey: user.avatarKey,
+      },
+    };
   }
 
   private verifyGuestToken(token: string): GuestClaims {

@@ -111,7 +111,11 @@ export type ApiErrorCode =
   | 'TURN_NOT_YOURS'
   | 'INVALID_MOVE'
   | 'NO_VALID_MOVE'
-  | 'NOT_ENOUGH_FUNDED_PLAYERS';
+  | 'NOT_ENOUGH_FUNDED_PLAYERS'
+  | 'UPGRADE_NOT_ALLOWED'
+  | 'GUEST_TOKEN_REQUIRED'
+  | 'GUEST_ALREADY_UPGRADED'
+  | 'PROFILE_INVALID_AVATAR';
 
 export type ApiErrorResponse = {
   code: ApiErrorCode;
@@ -140,8 +144,63 @@ export type GetMeResponse = {
     coinBalance: number;
     kind: UserKind;
     email?: string;
+    avatarKey?: string;
   };
 };
+
+export type UpgradeGuestRequest = {
+  guestAccessToken: string;
+};
+
+export type UpgradeGuestResponse = {
+  user: {
+    id: string;
+    displayName: string;
+    coinBalance: number;
+    kind: UserKind;
+    email?: string;
+    avatarKey?: string;
+  };
+  merged: boolean;
+};
+
+export type ProfileRank = 'BRONZE' | 'SILVER' | 'GOLD' | 'DIAMOND';
+
+export type ProfileStats = {
+  gamesPlayed: number;
+  wins: number;
+  winRate: number;
+};
+
+export type ProfileHistoryEntry = {
+  settlementId: string;
+  roomCode: string;
+  entryFee: number;
+  pot: number;
+  place: number | null;
+  settledAt: string;
+};
+
+export type GetMyProfileResponse = {
+  profile: {
+    id: string;
+    displayName: string;
+    avatarKey: string;
+    kind: UserKind;
+    email?: string;
+    coinBalance: number;
+    rank: ProfileRank;
+    stats: ProfileStats;
+    history: ProfileHistoryEntry[];
+  };
+};
+
+export type UpdateMyProfileRequest = {
+  displayName?: string;
+  avatarKey?: string;
+};
+
+export type UpdateMyProfileResponse = GetMyProfileResponse;
 
 export type CreateRoomRequest = {
   maxPlayers: 2 | 3 | 4;

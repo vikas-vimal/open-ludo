@@ -34,14 +34,17 @@ model User {
   kind        UserKind
   email       String?
   displayName String
+  avatarKey   String   @default("pawn_red")
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
   wallet      Wallet?
   roomPlayers RoomPlayer[]
-  hostedRooms Room[]      @relation("RoomHost")
+  hostedRooms Room[]             @relation("RoomHost")
   transactions WalletTransaction[]
   wonSettlements MatchSettlement[] @relation("MatchSettlementWinner")
+  guestMerges AccountMerge[]    @relation("AccountMergeGuest")
+  upgradedGuests AccountMerge[] @relation("AccountMergeRegistered")
 }
 
 model Wallet {
@@ -107,6 +110,7 @@ model MatchSettlement {
   pot                Int
   participantUserIds Json
   skippedUserIds     Json
+  placementsJson     Json?
   winnerUserId       String?
   status             MatchSettlementStatus @default(PENDING)
   settledAt          DateTime?
@@ -118,4 +122,16 @@ model MatchSettlement {
   transactions       WalletTransaction[]
 
   @@index([status])
+}
+
+model AccountMerge {
+  id               String   @id @default(cuid())
+  guestUserId      String   @unique
+  registeredUserId String
+  createdAt        DateTime @default(now())
+
+  guest            User     @relation("AccountMergeGuest", fields: [guestUserId], references: [id], onDelete: Cascade)
+  registered       User     @relation("AccountMergeRegistered", fields: [registeredUserId], references: [id], onDelete: Cascade)
+
+  @@index([registeredUserId, createdAt])
 }

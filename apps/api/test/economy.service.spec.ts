@@ -103,6 +103,10 @@ describe('EconomyService', () => {
       data: expect.objectContaining({
         status: 'SETTLED',
         winnerUserId: 'u1',
+        placementsJson: [
+          { userId: 'u1', displayName: 'Host', color: 'RED', place: 1 },
+          { userId: 'u2', displayName: 'Guest', color: 'GREEN', place: 2 },
+        ],
       }),
     });
     expect(tx.wallet.update).toHaveBeenCalledWith({

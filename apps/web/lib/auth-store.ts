@@ -4,6 +4,7 @@ export type LocalUser = {
   coinBalance: number;
   kind: 'guest' | 'registered';
   email?: string;
+  avatarKey?: string;
 };
 
 const TOKEN_KEY = 'open_ludo_access_token';
