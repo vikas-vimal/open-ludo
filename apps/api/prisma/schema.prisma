@@ -45,6 +45,10 @@ model User {
   wonSettlements MatchSettlement[] @relation("MatchSettlementWinner")
   guestMerges AccountMerge[]    @relation("AccountMergeGuest")
   upgradedGuests AccountMerge[] @relation("AccountMergeRegistered")
+  friendshipsA Friendship[]      @relation("FriendshipUserA")
+  friendshipsB Friendship[]      @relation("FriendshipUserB")
+  sentFriendInvites FriendInvite[] @relation("FriendInviteInviter")
+  consumedFriendInvites FriendInvite[] @relation("FriendInviteConsumedBy")
 }
 
 model Wallet {
@@ -134,4 +138,33 @@ model AccountMerge {
   registered       User     @relation("AccountMergeRegistered", fields: [registeredUserId], references: [id], onDelete: Cascade)
 
   @@index([registeredUserId, createdAt])
+}
+
+model Friendship {
+  id        String   @id @default(cuid())
+  userAId   String
+  userBId   String
+  createdAt DateTime @default(now())
+
+  userA     User     @relation("FriendshipUserA", fields: [userAId], references: [id], onDelete: Cascade)
+  userB     User     @relation("FriendshipUserB", fields: [userBId], references: [id], onDelete: Cascade)
+
+  @@unique([userAId, userBId])
+  @@index([userAId, createdAt])
+  @@index([userBId, createdAt])
+}
+
+model FriendInvite {
+  id               String   @id @default(cuid())
+  token            String   @unique
+  inviterUserId    String
+  consumedByUserId String?
+  createdAt        DateTime @default(now())
+  consumedAt       DateTime?
+
+  inviter          User     @relation("FriendInviteInviter", fields: [inviterUserId], references: [id], onDelete: Cascade)
+  consumedBy       User?    @relation("FriendInviteConsumedBy", fields: [consumedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([inviterUserId, createdAt])
+  @@index([consumedByUserId])
 }

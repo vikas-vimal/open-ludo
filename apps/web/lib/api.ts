@@ -1,6 +1,8 @@
 import type {
+  AcceptFriendInviteResponse,
   ApiErrorResponse,
   CreateGuestResponse,
+  CreateFriendInviteResponse,
   CreateRoomResponse,
   GetMyProfileResponse,
   GetMeResponse,
@@ -113,6 +115,21 @@ export const api = {
       method: 'PATCH',
       token,
       body: JSON.stringify(payload),
+    });
+  },
+
+  createFriendInvite(token: string): Promise<CreateFriendInviteResponse> {
+    return request('/v1/friends/invites', {
+      method: 'POST',
+      token,
+    });
+  },
+
+  acceptFriendInvite(inviteToken: string, token: string): Promise<AcceptFriendInviteResponse> {
+    const encoded = encodeURIComponent(inviteToken);
+    return request(`/v1/friends/invites/${encoded}/accept`, {
+      method: 'POST',
+      token,
     });
   },
 };

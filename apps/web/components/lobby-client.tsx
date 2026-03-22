@@ -1,6 +1,7 @@
 'use client';
 
 import type {
+  ChatMessagePayload,
   GameEndPayload,
   GameState,
   PlacementEntry,
@@ -81,6 +82,8 @@ export function LobbyClient({ roomCode }: LobbyClientProps): JSX.Element {
   const [guestName, setGuestName] = useState('');
   const [loadingGuest, setLoadingGuest] = useState(false);
   const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
+  const [chatInput, setChatInput] = useState('');
+  const [chatMessages, setChatMessages] = useState<ChatMessagePayload[]>([]);
 
   const shareLink = useMemo(() => {
     if (typeof window === 'undefined') {
@@ -186,6 +189,9 @@ export function LobbyClient({ roomCode }: LobbyClientProps): JSX.Element {
       const previousStatus = roomStatusRef.current;
       roomStatusRef.current = next.room.status;
       setRoomState(next);
+      if (previousStatus !== 'playing' && next.room.status === 'playing') {
+        setChatMessages([]);
+      }
       if (previousStatus !== next.room.status && next.room.status !== 'waiting') {
         void refreshMeBalance(token);
       }
@@ -202,6 +208,9 @@ export function LobbyClient({ roomCode }: LobbyClientProps): JSX.Element {
     });
     socket.on('error', (payload) => {
       setError(payload.message);
+    });
+    socket.on('chat_message', (payload) => {
+      setChatMessages((previous) => [...previous.slice(-99), payload]);
     });
 
     void (async () => {
@@ -319,6 +328,20 @@ export function LobbyClient({ roomCode }: LobbyClientProps): JSX.Element {
       return;
     }
     socketRef.current.emit('move_token', { roomCode, tokenIndex });
+  }
+
+  function sendChat(): void {
+    if (!socketRef.current) {
+      return;
+    }
+
+    const message = chatInput.trim();
+    if (!message) {
+      return;
+    }
+
+    socketRef.current.emit('send_chat', { roomCode, message });
+    setChatInput('');
   }
 
   if (!token) {
@@ -539,6 +562,50 @@ export function LobbyClient({ roomCode }: LobbyClientProps): JSX.Element {
               <p>No one has finished yet.</p>
             )}
           </section>
+
+          {roomState?.room.status === 'playing' ? (
+            <section className="panel stack">
+              <h3>Match Chat</h3>
+              <div
+                className="stack"
+                style={{
+                  border: '1px solid #d6c8b2',
+                  borderRadius: 10,
+                  padding: 10,
+                  minHeight: 140,
+                  maxHeight: 260,
+                  overflowY: 'auto',
+                }}
+              >
+                {chatMessages.length > 0 ? (
+                  chatMessages.map((entry) => (
+                    <div key={entry.messageId}>
+                      <strong>{entry.senderDisplayName}</strong>: {entry.message}
+                    </div>
+                  ))
+                ) : (
+                  <p>No chat messages yet.</p>
+                )}
+              </div>
+              <div className="row">
+                <input
+                  value={chatInput}
+                  onChange={(event) => setChatInput(event.target.value)}
+                  placeholder="Type a message"
+                  maxLength={280}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault();
+                      sendChat();
+                    }
+                  }}
+                />
+                <button onClick={sendChat} disabled={!chatInput.trim()}>
+                  Send
+                </button>
+              </div>
+            </section>
+          ) : null}
         </>
       )}
 

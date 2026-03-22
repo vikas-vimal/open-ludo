@@ -98,6 +98,7 @@ export type GameEndPayload = {
 export type ApiErrorCode =
   | 'AUTH_REQUIRED'
   | 'INVALID_TOKEN'
+  | 'REGISTERED_REQUIRED'
   | 'INVALID_NAME'
   | 'ROOM_NOT_FOUND'
   | 'ROOM_FULL'
@@ -115,7 +116,12 @@ export type ApiErrorCode =
   | 'UPGRADE_NOT_ALLOWED'
   | 'GUEST_TOKEN_REQUIRED'
   | 'GUEST_ALREADY_UPGRADED'
-  | 'PROFILE_INVALID_AVATAR';
+  | 'PROFILE_INVALID_AVATAR'
+  | 'INVITE_INVALID'
+  | 'INVITE_ALREADY_USED'
+  | 'INVITE_SELF'
+  | 'CHAT_NOT_AVAILABLE'
+  | 'CHAT_INVALID_MESSAGE';
 
 export type ApiErrorResponse = {
   code: ApiErrorCode;
@@ -172,6 +178,14 @@ export type ProfileStats = {
   winRate: number;
 };
 
+export type ProfileFriendEntry = {
+  id: string;
+  displayName: string;
+  avatarKey: string;
+  rank: ProfileRank;
+  coinBalance: number;
+};
+
 export type ProfileHistoryEntry = {
   settlementId: string;
   roomCode: string;
@@ -192,6 +206,7 @@ export type GetMyProfileResponse = {
     rank: ProfileRank;
     stats: ProfileStats;
     history: ProfileHistoryEntry[];
+    friends: ProfileFriendEntry[];
   };
 };
 
@@ -201,6 +216,15 @@ export type UpdateMyProfileRequest = {
 };
 
 export type UpdateMyProfileResponse = GetMyProfileResponse;
+
+export type CreateFriendInviteResponse = {
+  token: string;
+  inviteUrl: string;
+};
+
+export type AcceptFriendInviteResponse = {
+  friend: ProfileFriendEntry;
+};
 
 export type CreateRoomRequest = {
   maxPlayers: 2 | 3 | 4;
@@ -229,6 +253,16 @@ export type ClientToServerEvents = {
   start_game: (payload: { roomCode: string }) => void;
   roll_dice: (payload: { roomCode: string }) => void;
   move_token: (payload: { roomCode: string; tokenIndex: number }) => void;
+  send_chat: (payload: { roomCode: string; message: string }) => void;
+};
+
+export type ChatMessagePayload = {
+  roomCode: string;
+  messageId: string;
+  senderUserId: string;
+  senderDisplayName: string;
+  message: string;
+  createdAt: string;
 };
 
 export type ServerToClientEvents = {
@@ -238,6 +272,7 @@ export type ServerToClientEvents = {
   host_transferred: (payload: RoomState) => void;
   state_update: (payload: GameStatePayload) => void;
   game_end: (payload: GameEndPayload) => void;
+  chat_message: (payload: ChatMessagePayload) => void;
   error: (payload: ApiErrorResponse) => void;
 };
 

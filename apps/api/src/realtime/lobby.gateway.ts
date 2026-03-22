@@ -8,17 +8,21 @@ import {
   WebSocketGateway,
   WebSocketServer,
 } from '@nestjs/websockets';
+import { HttpStatus } from '@nestjs/common';
 import type {
   ApiErrorResponse,
+  ChatMessagePayload,
   ClientToServerEvents,
   ServerToClientEvents,
 } from '@open-ludo/contracts';
 import { Server, Socket } from 'socket.io';
+import { randomUUID } from 'node:crypto';
 import { ApiException } from '../common/errors.js';
 import { getEnv } from '../common/env.js';
 import { AuthService } from '../auth/auth.service.js';
 import { GameEngineService } from '../game/game-engine.service.js';
 import { RoomsService } from '../rooms/rooms.service.js';
+import { sanitizeChatMessage } from './chat-filter.util.js';
 
 type SocketData = {
   userId: string;
@@ -26,6 +30,9 @@ type SocketData = {
 };
 
 type LobbySocket = Socket<ClientToServerEvents, ServerToClientEvents, object, SocketData>;
+
+const CHAT_MIN_LENGTH = 1;
+const CHAT_MAX_LENGTH = 280;
 
 @WebSocketGateway({
   path: '/socket.io',
@@ -212,6 +219,45 @@ export class LobbyGateway implements OnGatewayInit, OnGatewayConnection, OnGatew
     }
   }
 
+  @SubscribeMessage('send_chat')
+  async sendChat(
+    @ConnectedSocket() client: LobbySocket,
+    @MessageBody() payload: { roomCode: string; message: string },
+  ): Promise<void> {
+    try {
+      const roomState = await this.roomsService.getRoomStateOrThrow(payload.roomCode);
+      if (roomState.room.status !== 'playing') {
+        throw new ApiException(
+          'CHAT_NOT_AVAILABLE',
+          'Chat is available only while a match is in progress.',
+          HttpStatus.CONFLICT,
+        );
+      }
+
+      const sender = roomState.players.find((player) => player.userId === client.data.userId);
+      if (!sender) {
+        throw new ApiException(
+          'CHAT_NOT_AVAILABLE',
+          'Only active room members can send chat messages.',
+          HttpStatus.FORBIDDEN,
+        );
+      }
+
+      const message = this.validateChatMessage(payload.message);
+      const chatMessage: ChatMessagePayload = {
+        roomCode: roomState.room.code,
+        messageId: randomUUID(),
+        senderUserId: client.data.userId,
+        senderDisplayName: sender.displayName,
+        message: sanitizeChatMessage(message),
+        createdAt: new Date().toISOString(),
+      };
+      this.server.to(roomState.room.code).emit('chat_message', chatMessage);
+    } catch (error) {
+      this.emitSocketError(client, error);
+    }
+  }
+
   private emitSocketError(client: LobbySocket, error: unknown): void {
     if (error instanceof ApiException) {
       const response = error.getResponse() as ApiErrorResponse;
@@ -223,6 +269,22 @@ export class LobbyGateway implements OnGatewayInit, OnGatewayConnection, OnGatew
       code: 'INVALID_MOVE',
       message: 'Unexpected socket error.',
     });
+  }
+
+  private validateChatMessage(raw: unknown): string {
+    if (typeof raw !== 'string') {
+      throw new ApiException('CHAT_INVALID_MESSAGE', 'Chat message must be a string.');
+    }
+
+    const message = raw.trim();
+    if (message.length < CHAT_MIN_LENGTH || message.length > CHAT_MAX_LENGTH) {
+      throw new ApiException(
+        'CHAT_INVALID_MESSAGE',
+        `Chat message must be between ${CHAT_MIN_LENGTH} and ${CHAT_MAX_LENGTH} characters.`,
+      );
+    }
+
+    return message;
   }
 
   private extractBearerToken(authHeader: string | string[] | undefined): string | null {

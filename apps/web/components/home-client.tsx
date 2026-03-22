@@ -3,7 +3,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { api, ApiClientError } from '../lib/api';
-import { clearSession, readToken, readUser, saveSession } from '../lib/auth-store';
+import {
+  clearPendingFriendInvite,
+  clearSession,
+  readPendingFriendInvite,
+  readToken,
+  readUser,
+  saveSession,
+} from '../lib/auth-store';
 import { getSupabaseClient } from '../lib/supabase';
 
 export function HomeClient(): JSX.Element {
@@ -59,6 +66,7 @@ export function HomeClient(): JSX.Element {
       const me = await api.getMe(accessToken);
       let user = me.user;
       let merged = false;
+      let inviteStatus = '';
 
       if (guestToken && me.user.kind === 'registered' && guestToken !== accessToken) {
         try {
@@ -79,13 +87,31 @@ export function HomeClient(): JSX.Element {
         }
       }
 
+      if (user.kind === 'registered') {
+        const pendingInvite = readPendingFriendInvite();
+        if (pendingInvite) {
+          try {
+            const accepted = await api.acceptFriendInvite(pendingInvite, accessToken);
+            clearPendingFriendInvite();
+            inviteStatus = ` Friend linked with ${accepted.friend.displayName}.`;
+          } catch (caught) {
+            if (caught instanceof ApiClientError) {
+              if (['INVITE_ALREADY_USED', 'INVITE_INVALID', 'INVITE_SELF'].includes(caught.code)) {
+                clearPendingFriendInvite();
+              }
+              inviteStatus = ` Invite status: ${caught.message}`;
+            }
+          }
+        }
+      }
+
       saveSession(accessToken, user);
       setDisplayName(user.displayName);
       setCoinBalance(user.coinBalance);
       setStatus(
         merged
-          ? `Signed in as ${user.displayName} (registered). Guest session merged.`
-          : `Signed in as ${user.displayName} (${user.kind})`,
+          ? `Signed in as ${user.displayName} (registered). Guest session merged.${inviteStatus}`
+          : `Signed in as ${user.displayName} (${user.kind}).${inviteStatus}`,
       );
       if (user.kind === 'registered') {
         guestTokenRef.current = null;

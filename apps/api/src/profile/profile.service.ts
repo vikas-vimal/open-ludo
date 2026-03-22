@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import type {
   GetMyProfileResponse,
+  ProfileFriendEntry,
   ProfileHistoryEntry,
   UpdateMyProfileRequest,
   UpdateMyProfileResponse,
@@ -27,7 +28,7 @@ export class ProfileService {
     const identityUserIds = await this.resolveIdentityUserIds(user.id, user.kind);
     const historyWhere = this.buildHistoryWhere(identityUserIds);
 
-    const [gamesPlayed, wins, settlements] = await Promise.all([
+    const [gamesPlayed, wins, settlements, friends] = await Promise.all([
       this.prisma.matchSettlement.count({ where: historyWhere }),
       this.prisma.matchSettlement.count({
         where: {
@@ -47,6 +48,7 @@ export class ProfileService {
         orderBy: { settledAt: 'desc' },
         take: 20,
       }),
+      this.getFriends(user.id, user.kind),
     ]);
 
     const winRate = gamesPlayed === 0 ? 0 : Number(((wins / gamesPlayed) * 100).toFixed(2));
@@ -74,6 +76,7 @@ export class ProfileService {
           winRate,
         },
         history,
+        friends,
       },
     };
   }
@@ -128,6 +131,45 @@ export class ProfileService {
         },
       })),
     };
+  }
+
+  private async getFriends(userId: string, kind: 'guest' | 'registered'): Promise<ProfileFriendEntry[]> {
+    if (kind !== 'registered') {
+      return [];
+    }
+
+    const friendships = await this.prisma.friendship.findMany({
+      where: {
+        OR: [{ userAId: userId }, { userBId: userId }],
+      },
+      include: {
+        userA: {
+          include: {
+            wallet: true,
+          },
+        },
+        userB: {
+          include: {
+            wallet: true,
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+    });
+
+    return friendships.map((friendship) => {
+      const friend = friendship.userAId === userId ? friendship.userB : friendship.userA;
+      const coinBalance = friend.wallet?.coinBalance ?? 0;
+
+      return {
+        id: friend.id,
+        displayName: friend.displayName,
+        avatarKey: friend.avatarKey,
+        coinBalance,
+        rank: deriveProfileRank(coinBalance),
+      };
+    });
   }
 
   private resolvePlace(

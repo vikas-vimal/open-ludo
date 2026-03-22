@@ -14,6 +14,9 @@ describe('ProfileService', () => {
       count: vi.fn(),
       findMany: vi.fn(),
     },
+    friendship: {
+      findMany: vi.fn(),
+    },
   };
 
   let service: ProfileService;
@@ -51,6 +54,28 @@ describe('ProfileService', () => {
         updatedAt: new Date('2026-03-22T10:00:00.000Z'),
       },
     ]);
+    prisma.friendship.findMany.mockResolvedValue([
+      {
+        userAId: 'friend-a',
+        userBId: 'registered-user',
+        userA: {
+          id: 'friend-a',
+          displayName: 'Dev',
+          avatarKey: 'pawn_green',
+          wallet: {
+            coinBalance: 1320,
+          },
+        },
+        userB: {
+          id: 'registered-user',
+          displayName: 'Sam',
+          avatarKey: 'pawn_red',
+          wallet: {
+            coinBalance: 1900,
+          },
+        },
+      },
+    ]);
 
     const profile = await service.getMyProfile('registered-user');
 
@@ -72,6 +97,15 @@ describe('ProfileService', () => {
       place: 2,
       settledAt: '2026-03-22T10:00:00.000Z',
     });
+    expect(profile.profile.friends).toEqual([
+      {
+        id: 'friend-a',
+        displayName: 'Dev',
+        avatarKey: 'pawn_green',
+        coinBalance: 1320,
+        rank: 'SILVER',
+      },
+    ]);
   });
 
   it('updates display name and avatar key', async () => {
@@ -89,6 +123,7 @@ describe('ProfileService', () => {
     prisma.accountMerge.findMany.mockResolvedValue([]);
     prisma.matchSettlement.count.mockResolvedValueOnce(0).mockResolvedValueOnce(0);
     prisma.matchSettlement.findMany.mockResolvedValue([]);
+    prisma.friendship.findMany.mockResolvedValue([]);
 
     const updated = await service.updateMyProfile('registered-user', {
       displayName: 'Updated Sam',

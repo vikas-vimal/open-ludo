@@ -14,6 +14,8 @@ export function ProfileClient(): JSX.Element {
   const [avatarKey, setAvatarKey] = useState<(typeof AVATAR_KEYS)[number]>('pawn_red');
   const [status, setStatus] = useState('Loading profile...');
   const [saving, setSaving] = useState(false);
+  const [creatingInvite, setCreatingInvite] = useState(false);
+  const [inviteUrl, setInviteUrl] = useState<string | null>(null);
 
   useEffect(() => {
     setToken(readToken());
@@ -100,6 +102,40 @@ export function ProfileClient(): JSX.Element {
     }
   }
 
+  async function generateInviteLink(): Promise<void> {
+    if (!token || !profile || profile.kind !== 'registered') {
+      return;
+    }
+
+    setCreatingInvite(true);
+    try {
+      const result = await api.createFriendInvite(token);
+      setInviteUrl(result.inviteUrl);
+      setStatus('Friend invite link created.');
+    } catch (caught) {
+      if (caught instanceof ApiClientError) {
+        setStatus(caught.message);
+      } else {
+        setStatus('Failed to create friend invite.');
+      }
+    } finally {
+      setCreatingInvite(false);
+    }
+  }
+
+  async function copyInviteLink(): Promise<void> {
+    if (!inviteUrl) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(inviteUrl);
+      setStatus('Friend invite link copied.');
+    } catch {
+      setStatus('Could not copy invite link. Copy it manually.');
+    }
+  }
+
   if (!token) {
     return (
       <section className="panel stack">
@@ -163,6 +199,52 @@ export function ProfileClient(): JSX.Element {
             <p>
               Win Rate: <strong>{profile.stats.winRate}%</strong>
             </p>
+          </div>
+
+          <div className="panel stack" style={{ background: '#f4fff8' }}>
+            <h3>Friends</h3>
+            {profile.kind === 'registered' ? (
+              <>
+                <div className="row">
+                  <button className="secondary" onClick={generateInviteLink} disabled={creatingInvite}>
+                    Generate Invite Link
+                  </button>
+                  <button onClick={copyInviteLink} disabled={!inviteUrl}>
+                    Copy Invite Link
+                  </button>
+                </div>
+                {inviteUrl ? <p style={{ wordBreak: 'break-all' }}>{inviteUrl}</p> : null}
+                {profile.friends.length > 0 ? (
+                  <div className="stack">
+                    {profile.friends.map((friend) => (
+                      <div
+                        key={friend.id}
+                        className="row"
+                        style={{
+                          justifyContent: 'space-between',
+                          border: '1px solid #b3d9c2',
+                          borderRadius: 10,
+                          padding: 10,
+                        }}
+                      >
+                        <div>
+                          <strong>{friend.displayName}</strong>
+                          <div style={{ fontSize: '0.85rem' }}>{friend.avatarKey}</div>
+                        </div>
+                        <div style={{ textAlign: 'right' }}>
+                          <div>Rank: {friend.rank}</div>
+                          <div>Coins: {friend.coinBalance}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p>No friends added yet.</p>
+                )}
+              </>
+            ) : (
+              <p>Upgrade to a registered account to unlock friend invites and friend list.</p>
+            )}
           </div>
 
           <div className="panel stack" style={{ background: '#f9f7ff' }}>
