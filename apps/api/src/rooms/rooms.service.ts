@@ -3,6 +3,7 @@ import type { RoomState } from '@open-ludo/contracts';
 import { ApiException } from '../common/errors.js';
 import { PrismaService } from '../common/prisma.service.js';
 import { RedisService } from '../common/redis.service.js';
+import { EconomyService } from '../economy/economy.service.js';
 import { GameEngineService } from '../game/game-engine.service.js';
 import { electNextHost } from './host-transfer.util.js';
 import { generateRoomCode, isValidRoomCode, normalizeRoomCode } from './room-code.util.js';
@@ -12,6 +13,7 @@ export class RoomsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly redis: RedisService,
+    private readonly economy: EconomyService,
     private readonly gameEngine: GameEngineService,
   ) {}
 
@@ -141,7 +143,13 @@ export class RoomsService {
       include: {
         players: {
           where: { leftAt: null },
-          include: { user: true },
+          include: {
+            user: {
+              include: {
+                wallet: true,
+              },
+            },
+          },
           orderBy: { joinedAt: 'asc' },
         },
       },
@@ -207,7 +215,13 @@ export class RoomsService {
       include: {
         players: {
           where: { leftAt: null },
-          include: { user: true },
+          include: {
+            user: {
+              include: {
+                wallet: true,
+              },
+            },
+          },
           orderBy: { joinedAt: 'asc' },
         },
       },
@@ -229,6 +243,15 @@ export class RoomsService {
       throw new ApiException('INVALID_MOVE', 'At least 2 players are required to start.', HttpStatus.CONFLICT);
     }
 
+    const prepared = await this.economy.prepareMatchStart(
+      room.id,
+      room.players.map((player) => ({
+        userId: player.userId,
+        displayName: player.user.displayName,
+        coinBalance: player.user.wallet?.coinBalance ?? 0,
+      })),
+    );
+
     await this.prisma.room.update({
       where: { id: room.id },
       data: { status: 'playing' },
@@ -236,10 +259,16 @@ export class RoomsService {
 
     await this.gameEngine.initializeGame(
       roomCode,
-      room.players.map((player) => ({
+      prepared.eligiblePlayers.map((player) => ({
         userId: player.userId,
-        displayName: player.user.displayName,
+        displayName: player.displayName,
       })),
+      {
+        entryFee: prepared.entryFee,
+        pot: prepared.pot,
+        participantUserIds: prepared.eligiblePlayers.map((player) => player.userId),
+        skippedUserIds: prepared.skippedUserIds,
+      },
     );
 
     return this.getRoomStateOrThrow(roomCode);

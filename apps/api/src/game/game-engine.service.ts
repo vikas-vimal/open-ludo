@@ -10,6 +10,7 @@ import type {
 import { PrismaService } from '../common/prisma.service.js';
 import { RedisService } from '../common/redis.service.js';
 import { ApiException } from '../common/errors.js';
+import { EconomyService } from '../economy/economy.service.js';
 import {
   COLOR_START_INDEX,
   GAME_STATE_TTL_SECONDS,
@@ -41,13 +42,23 @@ export class GameEngineService implements OnModuleDestroy {
   constructor(
     private readonly redis: RedisService,
     private readonly prisma: PrismaService,
+    private readonly economy: EconomyService,
   ) {}
 
   setPublisher(publisher: PublishFn): void {
     this.publisher = publisher;
   }
 
-  async initializeGame(roomCode: string, players: StartPlayer[]): Promise<GameStatePayload> {
+  async initializeGame(
+    roomCode: string,
+    players: StartPlayer[],
+    economyState: {
+      entryFee: number;
+      pot: number;
+      participantUserIds: string[];
+      skippedUserIds: string[];
+    },
+  ): Promise<GameStatePayload> {
     if (players.length < 2) {
       throw new ApiException('INVALID_MOVE', 'At least 2 players are required to start.');
     }
@@ -64,6 +75,12 @@ export class GameEngineService implements OnModuleDestroy {
         roomCode,
         status: 'playing',
         players: orderedPlayers,
+        economy: {
+          entryFee: economyState.entryFee,
+          pot: economyState.pot,
+          participantUserIds: economyState.participantUserIds,
+          skippedUserIds: economyState.skippedUserIds,
+        },
         currentTurnIndex: 0,
         turnPhase: 'await_roll',
         dice: {
@@ -160,12 +177,29 @@ export class GameEngineService implements OnModuleDestroy {
   }
 
   private async persistAndSchedule(result: EngineResult): Promise<void> {
-    await this.persistState(result.statePayload.state);
-    this.scheduleTurnTimeout(result.statePayload.state);
-
     if (result.gameEndPayload) {
+      const settlement = await this.economy.settleMatch(
+        result.gameEndPayload.roomCode,
+        result.gameEndPayload.placements,
+      );
+      if (settlement) {
+        result.statePayload.state.economy = {
+          ...result.statePayload.state.economy,
+          entryFee: settlement.entryFee,
+          pot: settlement.pot,
+        };
+        result.gameEndPayload = {
+          ...result.gameEndPayload,
+          winnerUserId: settlement.winnerUserId,
+          pot: settlement.pot,
+          entryFee: settlement.entryFee,
+        };
+      }
       await this.markRoomFinished(result.gameEndPayload.roomCode);
     }
+
+    await this.persistState(result.statePayload.state);
+    this.scheduleTurnTimeout(result.statePayload.state);
   }
 
   private async persistState(state: GameState): Promise<void> {
@@ -302,6 +336,10 @@ export class GameEngineService implements OnModuleDestroy {
         place: index + 1,
       };
     });
+    const winner = placements[0];
+    if (!winner) {
+      throw new ApiException('INVALID_MOVE', 'Winner could not be determined.', HttpStatus.CONFLICT);
+    }
 
     state.status = 'finished';
     state.turnPhase = 'finished';
@@ -318,6 +356,9 @@ export class GameEngineService implements OnModuleDestroy {
       roomCode: state.roomCode,
       placements,
       state,
+      winnerUserId: winner.userId,
+      pot: state.economy.pot,
+      entryFee: state.economy.entryFee,
     };
   }
 

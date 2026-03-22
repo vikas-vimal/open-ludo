@@ -69,6 +69,8 @@ function derivePlacements(state: GameState): PlacementEntry[] {
 
 export function LobbyClient({ roomCode }: LobbyClientProps): JSX.Element {
   const socketRef = useRef<Socket | null>(null);
+  const aliveRef = useRef(false);
+  const roomStatusRef = useRef<RoomState['room']['status'] | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [me, setMe] = useState<MeState | null>(null);
   const [roomState, setRoomState] = useState<RoomState | null>(null);
@@ -118,6 +120,13 @@ export function LobbyClient({ roomCode }: LobbyClientProps): JSX.Element {
     return derivePlacements(gameState);
   }, [gameEnd, gameState]);
 
+  const isSpectator = useMemo(() => {
+    if (!me || !gameState) {
+      return false;
+    }
+    return !gameState.economy.participantUserIds.includes(me.id);
+  }, [me, gameState]);
+
   const trackOccupants = useMemo(() => {
     if (!gameState) {
       return new Map<number, Array<{ playerName: string; color: PlayerColor; tokenIndex: number }>>();
@@ -143,6 +152,19 @@ export function LobbyClient({ roomCode }: LobbyClientProps): JSX.Element {
     setToken(readToken());
   }, []);
 
+  async function refreshMeBalance(accessToken: string): Promise<void> {
+    try {
+      const meResult = await api.getMe(accessToken);
+      if (!aliveRef.current) {
+        return;
+      }
+      setMe(meResult.user);
+      saveSession(accessToken, meResult.user);
+    } catch {
+      // Ignore balance refresh failures and keep existing UI state.
+    }
+  }
+
   useEffect(() => {
     if (!token) {
       setStatus('Create a guest identity to join this room.');
@@ -150,6 +172,7 @@ export function LobbyClient({ roomCode }: LobbyClientProps): JSX.Element {
     }
 
     let alive = true;
+    aliveRef.current = true;
     const socket = createLobbySocket(token);
     socketRef.current = socket;
 
@@ -159,7 +182,14 @@ export function LobbyClient({ roomCode }: LobbyClientProps): JSX.Element {
     });
     socket.on('player_joined', (next) => setRoomState(next));
     socket.on('player_left', (next) => setRoomState(next));
-    socket.on('room_state', (next) => setRoomState(next));
+    socket.on('room_state', (next) => {
+      const previousStatus = roomStatusRef.current;
+      roomStatusRef.current = next.room.status;
+      setRoomState(next);
+      if (previousStatus !== next.room.status && next.room.status !== 'waiting') {
+        void refreshMeBalance(token);
+      }
+    });
     socket.on('host_transferred', (next) => setRoomState(next));
     socket.on('state_update', (payload) => {
       setGameState(payload.state);
@@ -168,6 +198,7 @@ export function LobbyClient({ roomCode }: LobbyClientProps): JSX.Element {
       setGameEnd(payload);
       setGameState(payload.state);
       setStatus('Match finished.');
+      void refreshMeBalance(token);
     });
     socket.on('error', (payload) => {
       setError(payload.message);
@@ -188,6 +219,7 @@ export function LobbyClient({ roomCode }: LobbyClientProps): JSX.Element {
         }
 
         setRoomState(joined.room);
+        roomStatusRef.current = joined.room.room.status;
         setError(null);
         socket.connect();
       } catch (caught) {
@@ -205,6 +237,7 @@ export function LobbyClient({ roomCode }: LobbyClientProps): JSX.Element {
 
     return () => {
       alive = false;
+      aliveRef.current = false;
       if (socket.connected) {
         socket.emit('leave_room', { roomCode });
       }
@@ -321,6 +354,11 @@ export function LobbyClient({ roomCode }: LobbyClientProps): JSX.Element {
           <button onClick={copyShareLink}>Copy Share Link</button>
         </div>
         <p>{status}</p>
+        {me ? (
+          <p>
+            Coins: <strong>{me.coinBalance}</strong>
+          </p>
+        ) : null}
         {error ? <p style={{ color: '#9e2414' }}>{error}</p> : null}
       </section>
 
@@ -369,10 +407,23 @@ export function LobbyClient({ roomCode }: LobbyClientProps): JSX.Element {
         </section>
       ) : (
         <>
+          {isSpectator ? (
+            <section className="panel stack">
+              <h3>Spectator Mode</h3>
+              <p>
+                You are spectating this match because you had fewer than {gameState?.economy.entryFee ?? 100} coins
+                when it started.
+              </p>
+            </section>
+          ) : null}
           <section className="panel stack">
             <h3>Turn Panel</h3>
             {gameState ? (
               <>
+                <p>
+                  Entry fee: <strong>{gameState.economy.entryFee}</strong> | Pot:{' '}
+                  <strong>{gameState.economy.pot}</strong>
+                </p>
                 <p>
                   Current turn: <strong>{currentTurnPlayer?.displayName ?? 'Unknown'}</strong>
                 </p>

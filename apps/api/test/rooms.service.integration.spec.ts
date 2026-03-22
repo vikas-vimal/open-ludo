@@ -58,15 +58,27 @@ describe('RoomsService workflow', () => {
   const gameEngine = {
     initializeGame: vi.fn(),
   };
+  const economy = {
+    prepareMatchStart: vi.fn(),
+  };
 
   let service: RoomsService;
 
   beforeEach(() => {
     vi.resetAllMocks();
-    service = new RoomsService(prisma as never, redis as never, gameEngine as never);
+    service = new RoomsService(prisma as never, redis as never, economy as never, gameEngine as never);
     prisma.room.update.mockResolvedValue({ id: 'room-1' });
     prisma.roomPlayer.upsert.mockResolvedValue({});
     gameEngine.initializeGame.mockResolvedValue({ roomCode: 'ABC123', state: {} });
+    economy.prepareMatchStart.mockResolvedValue({
+      entryFee: 100,
+      pot: 200,
+      eligiblePlayers: [
+        { userId: 'u1', displayName: 'Host' },
+        { userId: 'u2', displayName: 'Guest' },
+      ],
+      skippedUserIds: [],
+    });
     prisma.$transaction.mockImplementation(async (input: unknown) => {
       if (typeof input === 'function') {
         return (input as (arg: unknown) => Promise<unknown>)({
@@ -167,9 +179,57 @@ describe('RoomsService workflow', () => {
       where: { id: 'room-1' },
       data: { status: 'playing' },
     });
+    expect(economy.prepareMatchStart).toHaveBeenCalledWith('room-1', [
+      { userId: 'u1', displayName: 'Host', coinBalance: 0 },
+      { userId: 'u2', displayName: 'Guest', coinBalance: 0 },
+    ]);
     expect(gameEngine.initializeGame).toHaveBeenCalledWith('ABC123', [
       { userId: 'u1', displayName: 'Host' },
       { userId: 'u2', displayName: 'Guest' },
-    ]);
+    ], {
+      entryFee: 100,
+      pot: 200,
+      participantUserIds: ['u1', 'u2'],
+      skippedUserIds: [],
+    });
+  });
+
+  it('starts match with only funded players and marks skipped users in game snapshot', async () => {
+    prisma.room.findUnique.mockResolvedValue({
+      id: 'room-1',
+      code: 'ABC123',
+      hostUserId: 'u1',
+      status: 'waiting',
+      players: [
+        { userId: 'u1', user: { displayName: 'Host' } },
+        { userId: 'u2', user: { displayName: 'Low Coins' } },
+        { userId: 'u3', user: { displayName: 'Guest' } },
+      ],
+    });
+
+    economy.prepareMatchStart.mockResolvedValueOnce({
+      entryFee: 100,
+      pot: 200,
+      eligiblePlayers: [
+        { userId: 'u1', displayName: 'Host' },
+        { userId: 'u3', displayName: 'Guest' },
+      ],
+      skippedUserIds: ['u2'],
+    });
+    vi.spyOn(service as any, 'getRoomStateOrThrow').mockResolvedValue(
+      mockRoomState('ABC123', 'u1', 'playing'),
+    );
+
+    await service.startRoom('u1', 'ABC123');
+
+    expect(gameEngine.initializeGame).toHaveBeenCalledWith('ABC123', [
+      { userId: 'u1', displayName: 'Host' },
+      { userId: 'u3', displayName: 'Guest' },
+    ], {
+      entryFee: 100,
+      pot: 200,
+      participantUserIds: ['u1', 'u3'],
+      skippedUserIds: ['u2'],
+    });
   });
 });

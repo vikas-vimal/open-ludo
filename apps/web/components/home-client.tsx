@@ -13,6 +13,7 @@ export function HomeClient(): JSX.Element {
   const [maxPlayers, setMaxPlayers] = useState<2 | 3 | 4>(4);
   const [status, setStatus] = useState('Create a guest identity or sign in, then open a room.');
   const [token, setToken] = useState<string | null>(null);
+  const [coinBalance, setCoinBalance] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [hasSupabase, setHasSupabase] = useState(false);
 
@@ -24,6 +25,7 @@ export function HomeClient(): JSX.Element {
     if (storedUser) {
       setStatus(`Signed in as ${storedUser.displayName} (${storedUser.kind})`);
       setDisplayName(storedUser.displayName);
+      setCoinBalance(storedUser.coinBalance);
     }
 
     const supabase = getSupabaseClient();
@@ -44,6 +46,7 @@ export function HomeClient(): JSX.Element {
         saveSession(accessToken, me.user);
         setDisplayName(me.user.displayName);
         setStatus(`Signed in as ${me.user.displayName} (${me.user.kind})`);
+        setCoinBalance(me.user.coinBalance);
       } catch {
         setStatus('Supabase session detected but API token validation failed.');
       }
@@ -67,6 +70,7 @@ export function HomeClient(): JSX.Element {
     saveSession(result.accessToken, result.user);
     setToken(result.accessToken);
     setStatus(`Guest ready: ${result.user.displayName}`);
+    setCoinBalance(result.user.coinBalance);
     return result.accessToken;
   }
 
@@ -78,6 +82,7 @@ export function HomeClient(): JSX.Element {
       saveSession(result.accessToken, result.user);
       setToken(result.accessToken);
       setStatus(`Guest session created for ${result.user.displayName}`);
+      setCoinBalance(result.user.coinBalance);
     } catch (error) {
       if (error instanceof ApiClientError) {
         setStatus(error.message);
@@ -153,6 +158,7 @@ export function HomeClient(): JSX.Element {
           onClick={() => {
             clearSession();
             setToken(null);
+            setCoinBalance(null);
             setStatus('Session cleared.');
           }}
           disabled={loading}
@@ -208,6 +214,7 @@ export function HomeClient(): JSX.Element {
       </div>
 
       <p>{status}</p>
+      {coinBalance !== null ? <p>Coins: {coinBalance}</p> : null}
       {token ? <p style={{ fontSize: '0.85rem' }}>Session token loaded.</p> : null}
     </section>
   );

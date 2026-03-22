@@ -26,13 +26,21 @@ describe('GameEngineService', () => {
       update: vi.fn(async () => ({ id: 'room-1' })),
     },
   };
+  const economy = {
+    settleMatch: vi.fn(),
+  };
 
   let service: GameEngineService;
 
   beforeEach(() => {
     vi.clearAllMocks();
     store.clear();
-    service = new GameEngineService(redis as never, prisma as never);
+    economy.settleMatch.mockResolvedValue({
+      winnerUserId: 'u1',
+      entryFee: 100,
+      pot: 200,
+    });
+    service = new GameEngineService(redis as never, prisma as never, economy as never);
   });
 
   afterEach(async () => {
@@ -44,7 +52,12 @@ describe('GameEngineService', () => {
     await service.initializeGame('ABCD12', [
       { userId: 'u1', displayName: 'Host' },
       { userId: 'u2', displayName: 'Guest' },
-    ]);
+    ], {
+      entryFee: 100,
+      pot: 200,
+      participantUserIds: ['u1', 'u2'],
+      skippedUserIds: [],
+    });
 
     vi.spyOn(Math, 'random').mockReturnValue(0.99);
     const rolled = await service.rollDice('ABCD12', 'u1');
@@ -77,6 +90,12 @@ describe('GameEngineService', () => {
           tokens: [44, -1, -1, -1],
         },
       ],
+      economy: {
+        entryFee: 100,
+        pot: 200,
+        participantUserIds: ['u1', 'u2'],
+        skippedUserIds: [],
+      },
       currentTurnIndex: 0,
       turnPhase: 'await_move',
       dice: { value: 5, isAuto: false },
@@ -111,6 +130,12 @@ describe('GameEngineService', () => {
           tokens: [47, -1, -1, -1],
         },
       ],
+      economy: {
+        entryFee: 100,
+        pot: 200,
+        participantUserIds: ['u1', 'u2'],
+        skippedUserIds: [],
+      },
       currentTurnIndex: 0,
       turnPhase: 'await_move',
       dice: { value: 6, isAuto: false },
@@ -142,6 +167,12 @@ describe('GameEngineService', () => {
           tokens: [55, 56, 56, 56],
         },
       ],
+      economy: {
+        entryFee: 100,
+        pot: 200,
+        participantUserIds: ['u1', 'u2'],
+        skippedUserIds: [],
+      },
       currentTurnIndex: 0,
       turnPhase: 'await_move',
       dice: { value: 1, isAuto: false },
@@ -154,6 +185,9 @@ describe('GameEngineService', () => {
     const moved = await service.moveToken('END123', 'u1', 0);
     expect(moved.gameEndPayload).toBeDefined();
     expect(moved.gameEndPayload?.placements.map((entry) => entry.userId)).toEqual(['u1', 'u2']);
+    expect(moved.gameEndPayload?.winnerUserId).toBe('u1');
+    expect(moved.gameEndPayload?.pot).toBe(200);
+    expect(economy.settleMatch).toHaveBeenCalledWith('END123', expect.any(Array));
     expect(moved.statePayload.state.status).toBe('finished');
     expect(prisma.room.update).toHaveBeenCalledWith({
       where: { code: 'END123' },
@@ -165,7 +199,12 @@ describe('GameEngineService', () => {
     await service.initializeGame('TIME01', [
       { userId: 'u1', displayName: 'Host' },
       { userId: 'u2', displayName: 'Guest' },
-    ]);
+    ], {
+      entryFee: 100,
+      pot: 200,
+      participantUserIds: ['u1', 'u2'],
+      skippedUserIds: [],
+    });
 
     vi.spyOn(Math, 'random').mockReturnValue(0.0);
     await service.handleTurnTimeout('TIME01');
@@ -193,6 +232,12 @@ describe('GameEngineService', () => {
           tokens: [-1, -1, -1, -1],
         },
       ],
+      economy: {
+        entryFee: 100,
+        pot: 200,
+        participantUserIds: ['u1', 'u2'],
+        skippedUserIds: [],
+      },
       currentTurnIndex: 0,
       turnPhase: 'await_move',
       dice: { value: 1, isAuto: false },

@@ -66,6 +66,12 @@ export type GameState = {
   roomCode: string;
   status: 'playing' | 'finished';
   players: PlayerGameState[];
+  economy: {
+    entryFee: number;
+    pot: number;
+    participantUserIds: string[];
+    skippedUserIds: string[];
+  };
   currentTurnIndex: number;
   turnPhase: TurnPhase;
   dice: DiceState;
@@ -84,6 +90,9 @@ export type GameEndPayload = {
   roomCode: string;
   state: GameState;
   placements: PlacementEntry[];
+  winnerUserId: string;
+  pot: number;
+  entryFee: number;
 };
 
 export type ApiErrorCode =
@@ -101,7 +110,8 @@ export type ApiErrorCode =
   | 'GAME_NOT_STARTED'
   | 'TURN_NOT_YOURS'
   | 'INVALID_MOVE'
-  | 'NO_VALID_MOVE';
+  | 'NO_VALID_MOVE'
+  | 'NOT_ENOUGH_FUNDED_PLAYERS';
 
 export type ApiErrorResponse = {
   code: ApiErrorCode;

@@ -18,6 +18,16 @@ enum RoomStatus {
   finished
 }
 
+enum WalletTransactionKind {
+  ENTRY_FEE
+  PAYOUT
+}
+
+enum MatchSettlementStatus {
+  PENDING
+  SETTLED
+}
+
 model User {
   id          String   @id @default(cuid())
   externalId  String   @unique
@@ -30,6 +40,8 @@ model User {
   wallet      Wallet?
   roomPlayers RoomPlayer[]
   hostedRooms Room[]      @relation("RoomHost")
+  transactions WalletTransaction[]
+  wonSettlements MatchSettlement[] @relation("MatchSettlementWinner")
 }
 
 model Wallet {
@@ -40,6 +52,22 @@ model Wallet {
   updatedAt   DateTime @updatedAt
 
   user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model WalletTransaction {
+  id           String                @id @default(cuid())
+  userId       String
+  settlementId String
+  kind         WalletTransactionKind
+  amount       Int
+  createdAt    DateTime              @default(now())
+
+  user         User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  settlement   MatchSettlement       @relation(fields: [settlementId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([settlementId, createdAt])
+  @@unique([settlementId, userId, kind])
 }
 
 model Room {
@@ -53,6 +81,7 @@ model Room {
 
   host       User        @relation("RoomHost", fields: [hostUserId], references: [id])
   players    RoomPlayer[]
+  settlement MatchSettlement?
 }
 
 model RoomPlayer {
@@ -69,4 +98,24 @@ model RoomPlayer {
 
   @@unique([roomId, userId])
   @@index([roomId])
+}
+
+model MatchSettlement {
+  id                 String                @id @default(cuid())
+  roomId             String                @unique
+  entryFee           Int
+  pot                Int
+  participantUserIds Json
+  skippedUserIds     Json
+  winnerUserId       String?
+  status             MatchSettlementStatus @default(PENDING)
+  settledAt          DateTime?
+  createdAt          DateTime              @default(now())
+  updatedAt          DateTime              @updatedAt
+
+  room               Room                  @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  winner             User?                 @relation("MatchSettlementWinner", fields: [winnerUserId], references: [id], onDelete: SetNull)
+  transactions       WalletTransaction[]
+
+  @@index([status])
 }
