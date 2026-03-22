@@ -8,24 +8,29 @@ Phase 1 implementation of the lobby + realtime foundation:
 
 ## Quick Start
 
-1. Install dependencies:
+1. Use Node `24.x`:
+```bash
+node -v
+```
+
+2. Install dependencies:
 ```bash
 COREPACK_HOME=/tmp/corepack pnpm install
 ```
 
-2. Create env files:
+3. Create env files:
 ```bash
 cp apps/api/.env.example apps/api/.env
 cp apps/web/.env.example apps/web/.env.local
 ```
 
-3. Generate Prisma client and run migrations:
+4. Generate Prisma client and run migrations:
 ```bash
 COREPACK_HOME=/tmp/corepack pnpm --filter @open-ludo/api prisma:generate
 COREPACK_HOME=/tmp/corepack pnpm --filter @open-ludo/api prisma:migrate
 ```
 
-4. Run services in two terminals:
+5. Run services in two terminals:
 ```bash
 ./scripts/dev-api.sh
 ./scripts/dev-web.sh
@@ -70,6 +75,7 @@ Error responses follow:
   - `COREPACK_HOME=/tmp/corepack pnpm build`
   - `COREPACK_HOME=/tmp/corepack pnpm test`
   - `COREPACK_HOME=/tmp/corepack pnpm typecheck`
+  - `COREPACK_HOME=/tmp/corepack pnpm check:deps-exact`
 - Helper scripts:
   - `scripts/dev-api.sh`
   - `scripts/dev-web.sh`

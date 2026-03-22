@@ -8,7 +8,7 @@ import { toFriendlyErrorMessage } from '../lib/error-messages';
 
 const AVATAR_KEYS = ['pawn_red', 'pawn_green', 'pawn_yellow', 'pawn_blue'] as const;
 
-export function ProfileClient(): JSX.Element {
+export function ProfileClient() {
   const [token, setToken] = useState<string | null>(null);
   const [profile, setProfile] = useState<GetMyProfileResponse['profile'] | null>(null);
   const [displayName, setDisplayName] = useState('');

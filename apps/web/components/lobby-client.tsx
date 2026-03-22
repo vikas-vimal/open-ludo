@@ -72,7 +72,7 @@ function derivePlacements(state: GameState): PlacementEntry[] {
   });
 }
 
-export function LobbyClient({ roomCode }: LobbyClientProps): JSX.Element {
+export function LobbyClient({ roomCode }: LobbyClientProps) {
   const socketRef = useRef<Socket | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const soundEnabledRef = useRef(false);

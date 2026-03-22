@@ -1,15 +1,16 @@
 import { LobbyClient } from '../../../components/lobby-client';
 
 type PageProps = {
-  params: {
+  params: Promise<{
     code: string;
-  };
+  }>;
 };
 
-export default function RoomPage({ params }: PageProps): JSX.Element {
+export default async function RoomPage({ params }: PageProps) {
+  const routeParams = await params;
   return (
     <main className="stack">
-      <LobbyClient roomCode={params.code.toUpperCase()} />
+      <LobbyClient roomCode={routeParams.code.toUpperCase()} />
     </main>
   );
 }

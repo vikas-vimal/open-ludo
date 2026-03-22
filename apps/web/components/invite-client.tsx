@@ -15,7 +15,7 @@ type InviteClientProps = {
   token: string;
 };
 
-export function InviteClient({ token }: InviteClientProps): JSX.Element {
+export function InviteClient({ token }: InviteClientProps) {
   const [status, setStatus] = useState('Checking invite...');
   const [busy, setBusy] = useState(true);
 

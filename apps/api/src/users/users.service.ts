@@ -1,7 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import type { AuthContext } from '@open-ludo/contracts';
-import { Prisma } from '@prisma/client';
-import type { UserKind } from '@prisma/client';
+import { Prisma, type UserKind } from '../generated/prisma/client.js';
 import { ApiException } from '../common/errors.js';
 import { PrismaService } from '../common/prisma.service.js';
 

@@ -6,7 +6,7 @@ import type {
   UpdateMyProfileRequest,
   UpdateMyProfileResponse,
 } from '@open-ludo/contracts';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '../generated/prisma/client.js';
 import { ApiException } from '../common/errors.js';
 import { PrismaService } from '../common/prisma.service.js';
 import { deriveProfileRank, isValidAvatarKey } from './profile.constants.js';

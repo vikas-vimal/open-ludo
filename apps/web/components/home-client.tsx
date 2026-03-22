@@ -14,7 +14,7 @@ import {
 } from '../lib/auth-store';
 import { getSupabaseClient } from '../lib/supabase';
 
-export function HomeClient(): JSX.Element {
+export function HomeClient() {
   const router = useRouter();
   const [displayName, setDisplayName] = useState('');
   const [joinCode, setJoinCode] = useState('');

@@ -5,7 +5,7 @@ import type {
   CreateFriendInviteResponse,
   ProfileFriendEntry,
 } from '@open-ludo/contracts';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '../generated/prisma/client.js';
 import { randomBytes } from 'node:crypto';
 import { ApiException } from '../common/errors.js';
 import { getEnv } from '../common/env.js';

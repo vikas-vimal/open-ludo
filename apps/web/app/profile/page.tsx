@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { ProfileClient } from '../../components/profile-client';
 
-export default function ProfilePage(): JSX.Element {
+export default function ProfilePage() {
   return (
     <main className="stack">
       <section className="panel stack">

@@ -1,6 +1,6 @@
 import { HttpStatus, Injectable } from '@nestjs/common';
 import type { PlacementEntry } from '@open-ludo/contracts';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '../generated/prisma/client.js';
 import { ApiException } from '../common/errors.js';
 import { PrismaService } from '../common/prisma.service.js';
 import { ENTRY_FEE_COINS } from './economy.constants.js';

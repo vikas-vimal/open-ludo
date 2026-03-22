@@ -1,15 +1,16 @@
 import { InviteClient } from '../../../components/invite-client';
 
 type PageProps = {
-  params: {
+  params: Promise<{
     token: string;
-  };
+  }>;
 };
 
-export default function InvitePage({ params }: PageProps): JSX.Element {
+export default async function InvitePage({ params }: PageProps) {
+  const routeParams = await params;
   return (
     <main className="stack">
-      <InviteClient token={params.token} />
+      <InviteClient token={routeParams.token} />
     </main>
   );
 }

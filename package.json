@@ -2,17 +2,21 @@
   "name": "open-ludo",
   "private": true,
   "packageManager": "pnpm@9.12.3",
+  "engines": {
+    "node": ">=24.0.0 <25.0.0"
+  },
   "scripts": {
     "dev": "turbo run dev --parallel",
     "build": "turbo run build",
-    "test": "turbo run test",
+    "test": "pnpm check:deps-exact && turbo run test",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
-    "format": "prettier --write ."
+    "format": "prettier --write .",
+    "check:deps-exact": "node ./scripts/check-exact-deps.mjs"
   },
   "devDependencies": {
-    "prettier": "^3.3.3",
-    "turbo": "^2.1.2",
-    "typescript": "^5.6.2"
+    "prettier": "3.8.1",
+    "turbo": "2.8.20",
+    "typescript": "5.9.3"
   }
 }
