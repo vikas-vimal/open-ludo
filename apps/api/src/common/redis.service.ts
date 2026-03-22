@@ -20,6 +20,10 @@ export class RedisService implements OnModuleDestroy {
     return `room:${roomCode}:presence`;
   }
 
+  private playingRoomsKey(): string {
+    return 'rooms:playing';
+  }
+
   async markConnected(roomCode: string, userId: string): Promise<void> {
     const key = this.roomPresenceKey(roomCode);
     await this.redis.sadd(key, userId);
@@ -42,6 +46,18 @@ export class RedisService implements OnModuleDestroy {
     const key = this.roomPresenceKey(roomCode);
     const members = await this.redis.smembers(key);
     return new Set(members);
+  }
+
+  async markRoomPlaying(roomCode: string): Promise<void> {
+    await this.redis.sadd(this.playingRoomsKey(), roomCode);
+  }
+
+  async unmarkRoomPlaying(roomCode: string): Promise<void> {
+    await this.redis.srem(this.playingRoomsKey(), roomCode);
+  }
+
+  async listPlayingRooms(): Promise<string[]> {
+    return this.redis.smembers(this.playingRoomsKey());
   }
 
   async setJson<T>(key: string, value: T, ttlSeconds?: number): Promise<void> {

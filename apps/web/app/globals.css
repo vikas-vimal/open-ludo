@@ -106,6 +106,141 @@ p {
   gap: 12px;
 }
 
+.notice {
+  border-radius: 10px;
+  padding: 8px 10px;
+  font-size: 0.95rem;
+}
+
+.notice-info {
+  background: #eef8ff;
+  border: 1px solid #adcbe0;
+}
+
+.notice-warning {
+  background: #fff3de;
+  border: 1px solid #ddb071;
+}
+
+.notice-error {
+  background: #ffe8e2;
+  border: 1px solid #de8d7c;
+}
+
+.loading-state {
+  border: 1px dashed #c6b09b;
+  border-radius: 10px;
+  padding: 10px;
+  color: var(--ink-soft);
+  background: linear-gradient(90deg, #f8f1e4 25%, #fff9ef 50%, #f8f1e4 75%);
+  background-size: 240% 100%;
+  animation: shimmer 1.2s ease-in-out infinite;
+}
+
+.status-badge {
+  width: fit-content;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 0.86rem;
+  border: 1px solid #b9a48d;
+  background: #f9efe4;
+}
+
+.status-connected {
+  border-color: #78b39e;
+  background: #ecfff6;
+}
+
+.status-reconnecting,
+.status-connecting {
+  border-color: #ddb071;
+  background: #fff8eb;
+}
+
+.status-sync_failed {
+  border-color: #de8d7c;
+  background: #ffece8;
+}
+
+.dice-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: 2px solid #5b4234;
+  border-radius: 10px;
+  font-weight: 700;
+  background: #fff8e9;
+}
+
+.dice-roll {
+  animation: dicePulse 240ms ease-in-out;
+}
+
+.board-scroll {
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.board-grid {
+  display: grid;
+  grid-template-columns: repeat(13, minmax(46px, 1fr));
+  gap: 6px;
+  min-width: 700px;
+}
+
+.board-cell {
+  border: 2px solid #d7c6ae;
+  border-radius: 8px;
+  min-height: 52px;
+  padding: 4px;
+  background: #fff;
+  transition: background-color 180ms ease;
+}
+
+.board-cell-safe {
+  border-color: #0f8b8d;
+  background: #eefcff;
+}
+
+.board-cell-highlight {
+  background: #fff4db;
+}
+
+.token-dot {
+  transition: transform 180ms ease;
+}
+
+.mobile-action-bar {
+  display: none;
+}
+
+.mobile-safe-area {
+  padding-bottom: 0;
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+@keyframes dicePulse {
+  0% {
+    transform: scale(1) rotate(0deg);
+  }
+  50% {
+    transform: scale(1.06) rotate(8deg);
+  }
+  100% {
+    transform: scale(1) rotate(0deg);
+  }
+}
+
 @media (max-width: 700px) {
   main {
     width: calc(100% - 16px);
@@ -114,5 +249,33 @@ p {
 
   .panel {
     border-radius: 16px;
+  }
+}
+
+@media (max-width: 900px) {
+  .mobile-action-bar {
+    position: fixed;
+    left: 8px;
+    right: 8px;
+    bottom: 8px;
+    z-index: 40;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+    padding: 8px;
+    border-radius: 14px;
+    border: 1px solid #c8b59f;
+    background: rgba(255, 249, 241, 0.98);
+    box-shadow: 0 10px 24px rgba(23, 16, 10, 0.22);
+    backdrop-filter: blur(4px);
+  }
+
+  .mobile-action-bar button {
+    width: 100%;
+    min-height: 42px;
+  }
+
+  .mobile-safe-area {
+    padding-bottom: 88px;
   }
 }

@@ -24,6 +24,12 @@ export type MatchSettlementSummary = {
   pot: number;
 };
 
+export type MatchCancellationSummary = {
+  entryFee: number;
+  pot: number;
+  refundedUserIds: string[];
+};
+
 @Injectable()
 export class EconomyService {
   constructor(private readonly prisma: PrismaService) {}
@@ -139,6 +145,13 @@ export class EconomyService {
           pot: settlement.pot,
         };
       }
+      if (settlement.status === 'CANCELLED') {
+        throw new ApiException(
+          'MATCH_CANCELLED_IDLE',
+          'Match was cancelled due to inactivity.',
+          HttpStatus.CONFLICT,
+        );
+      }
 
       const updated = await tx.matchSettlement.updateMany({
         where: {
@@ -189,5 +202,96 @@ export class EconomyService {
         pot: settlement.pot,
       };
     });
+  }
+
+  async cancelMatchForInactivity(roomCode: string): Promise<MatchCancellationSummary | null> {
+    return this.prisma.$transaction(async (tx) => {
+      const room = await tx.room.findUnique({
+        where: { code: roomCode },
+        select: { id: true },
+      });
+
+      if (!room) {
+        throw new ApiException('ROOM_NOT_FOUND', 'Room does not exist.', HttpStatus.NOT_FOUND);
+      }
+
+      const settlement = await tx.matchSettlement.findUnique({
+        where: { roomId: room.id },
+      });
+      if (!settlement) {
+        return null;
+      }
+
+      const participantUserIds = this.parseParticipantIds(settlement.participantUserIds);
+      if (settlement.status === 'CANCELLED') {
+        return {
+          entryFee: settlement.entryFee,
+          pot: settlement.pot,
+          refundedUserIds: participantUserIds,
+        };
+      }
+      if (settlement.status === 'SETTLED') {
+        return null;
+      }
+
+      const updated = await tx.matchSettlement.updateMany({
+        where: {
+          id: settlement.id,
+          status: 'PENDING',
+        },
+        data: {
+          status: 'CANCELLED',
+          cancelledAt: new Date(),
+          cancelledReason: 'idle_timeout',
+        },
+      });
+
+      if (updated.count === 0) {
+        const latest = await tx.matchSettlement.findUnique({
+          where: { id: settlement.id },
+        });
+        if (!latest) {
+          return null;
+        }
+
+        return {
+          entryFee: latest.entryFee,
+          pot: latest.pot,
+          refundedUserIds: this.parseParticipantIds(latest.participantUserIds),
+        };
+      }
+
+      for (const userId of participantUserIds) {
+        await tx.wallet.update({
+          where: { userId },
+          data: {
+            coinBalance: { increment: settlement.entryFee },
+          },
+        });
+
+        await tx.walletTransaction.create({
+          data: {
+            userId,
+            settlementId: settlement.id,
+            kind: 'REFUND',
+            amount: settlement.entryFee,
+          },
+        });
+      }
+
+      return {
+        entryFee: settlement.entryFee,
+        pot: settlement.pot,
+        refundedUserIds: participantUserIds,
+      };
+    });
+  }
+
+  private parseParticipantIds(value: Prisma.JsonValue): string[] {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    return value.filter((entry): entry is string => typeof entry === 'string');
   }
 }

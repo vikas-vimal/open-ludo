@@ -1,9 +1,10 @@
 'use client';
 
 import type { GetMyProfileResponse } from '@open-ludo/contracts';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, ApiClientError } from '../lib/api';
 import { readToken, saveSession } from '../lib/auth-store';
+import { toFriendlyErrorMessage } from '../lib/error-messages';
 
 const AVATAR_KEYS = ['pawn_red', 'pawn_green', 'pawn_yellow', 'pawn_blue'] as const;
 
@@ -13,6 +14,8 @@ export function ProfileClient(): JSX.Element {
   const [displayName, setDisplayName] = useState('');
   const [avatarKey, setAvatarKey] = useState<(typeof AVATAR_KEYS)[number]>('pawn_red');
   const [status, setStatus] = useState('Loading profile...');
+  const [error, setError] = useState<string | null>(null);
+  const [loadingProfile, setLoadingProfile] = useState(false);
   const [saving, setSaving] = useState(false);
   const [creatingInvite, setCreatingInvite] = useState(false);
   const [inviteUrl, setInviteUrl] = useState<string | null>(null);
@@ -21,43 +24,40 @@ export function ProfileClient(): JSX.Element {
     setToken(readToken());
   }, []);
 
+  const loadProfile = useCallback(async (accessToken: string): Promise<void> => {
+    setLoadingProfile(true);
+    try {
+      const result = await api.getMyProfile(accessToken);
+      setProfile(result.profile);
+      setDisplayName(result.profile.displayName);
+      setAvatarKey(
+        AVATAR_KEYS.includes(result.profile.avatarKey as (typeof AVATAR_KEYS)[number])
+          ? (result.profile.avatarKey as (typeof AVATAR_KEYS)[number])
+          : 'pawn_red',
+      );
+      setStatus('Profile loaded.');
+      setError(null);
+    } catch (caught) {
+      if (caught instanceof ApiClientError) {
+        setError(toFriendlyErrorMessage(caught.code, caught.message));
+      } else {
+        setError('Failed to load profile.');
+      }
+    } finally {
+      setLoadingProfile(false);
+    }
+  }, []);
+
   useEffect(() => {
     if (!token) {
       setStatus('Sign in to view your profile.');
+      setError(null);
+      setProfile(null);
       return;
     }
 
-    let active = true;
-    void (async () => {
-      try {
-        const result = await api.getMyProfile(token);
-        if (!active) {
-          return;
-        }
-        setProfile(result.profile);
-        setDisplayName(result.profile.displayName);
-        setAvatarKey(
-          AVATAR_KEYS.includes(result.profile.avatarKey as (typeof AVATAR_KEYS)[number])
-            ? (result.profile.avatarKey as (typeof AVATAR_KEYS)[number])
-            : 'pawn_red',
-        );
-        setStatus('Profile loaded.');
-      } catch (caught) {
-        if (!active) {
-          return;
-        }
-        if (caught instanceof ApiClientError) {
-          setStatus(caught.message);
-        } else {
-          setStatus('Failed to load profile.');
-        }
-      }
-    })();
-
-    return () => {
-      active = false;
-    };
-  }, [token]);
+    void loadProfile(token);
+  }, [token, loadProfile]);
 
   const topMatches = useMemo(() => profile?.history.slice(0, 10) ?? [], [profile]);
 
@@ -91,11 +91,12 @@ export function ProfileClient(): JSX.Element {
         avatarKey: updated.profile.avatarKey,
       });
       setStatus('Profile updated.');
+      setError(null);
     } catch (caught) {
       if (caught instanceof ApiClientError) {
-        setStatus(caught.message);
+        setError(toFriendlyErrorMessage(caught.code, caught.message));
       } else {
-        setStatus('Failed to update profile.');
+        setError('Failed to update profile.');
       }
     } finally {
       setSaving(false);
@@ -112,11 +113,12 @@ export function ProfileClient(): JSX.Element {
       const result = await api.createFriendInvite(token);
       setInviteUrl(result.inviteUrl);
       setStatus('Friend invite link created.');
+      setError(null);
     } catch (caught) {
       if (caught instanceof ApiClientError) {
-        setStatus(caught.message);
+        setError(toFriendlyErrorMessage(caught.code, caught.message));
       } else {
-        setStatus('Failed to create friend invite.');
+        setError('Failed to create friend invite.');
       }
     } finally {
       setCreatingInvite(false);
@@ -131,8 +133,9 @@ export function ProfileClient(): JSX.Element {
     try {
       await navigator.clipboard.writeText(inviteUrl);
       setStatus('Friend invite link copied.');
+      setError(null);
     } catch {
-      setStatus('Could not copy invite link. Copy it manually.');
+      setError('Could not copy invite link. Copy it manually.');
     }
   }
 
@@ -148,7 +151,10 @@ export function ProfileClient(): JSX.Element {
   return (
     <section className="panel stack">
       <h2>Profile</h2>
-      <p>{status}</p>
+      {loadingProfile ? <p className="loading-state">Loading profile data...</p> : null}
+      <p className="notice notice-info">{status}</p>
+      {error ? <p className="notice notice-error">{error}</p> : null}
+      {token && error ? <button onClick={() => void loadProfile(token)}>Retry</button> : null}
 
       {profile ? (
         <>

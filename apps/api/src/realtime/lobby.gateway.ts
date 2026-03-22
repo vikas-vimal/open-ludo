@@ -55,7 +55,7 @@ export class LobbyGateway implements OnGatewayInit, OnGatewayConnection, OnGatew
     this.gameEngine.setPublisher(async (event, payload) => {
       this.server.to(payload.roomCode).emit(event, payload as never);
 
-      if (event === 'game_end') {
+      if (event === 'game_end' || event === 'game_cancelled') {
         const latestRoom = await this.roomsService.getRoomStateOrThrow(payload.roomCode).catch(() => null);
         if (latestRoom) {
           this.server.to(payload.roomCode).emit('room_state', latestRoom);

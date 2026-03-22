@@ -21,11 +21,13 @@ enum RoomStatus {
 enum WalletTransactionKind {
   ENTRY_FEE
   PAYOUT
+  REFUND
 }
 
 enum MatchSettlementStatus {
   PENDING
   SETTLED
+  CANCELLED
 }
 
 model User {
@@ -118,6 +120,8 @@ model MatchSettlement {
   winnerUserId       String?
   status             MatchSettlementStatus @default(PENDING)
   settledAt          DateTime?
+  cancelledAt        DateTime?
+  cancelledReason    String?
   createdAt          DateTime              @default(now())
   updatedAt          DateTime              @updatedAt
 

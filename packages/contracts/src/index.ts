@@ -52,6 +52,7 @@ export type PlayerGameState = {
   displayName: string;
   color: PlayerColor;
   tokens: number[];
+  isForfeited?: boolean;
   finishedRank?: number;
 };
 
@@ -77,6 +78,8 @@ export type GameState = {
   dice: DiceState;
   validMoves: ValidMove[];
   finishedOrder: string[];
+  forfeitedOrder: string[];
+  disconnectDeadlineByUserId?: Record<string, string>;
   turnDeadlineAt?: string;
   lastUpdatedAt: string;
 };
@@ -95,6 +98,14 @@ export type GameEndPayload = {
   entryFee: number;
 };
 
+export type GameCancelledPayload = {
+  roomCode: string;
+  state: GameState;
+  reason: 'idle_timeout';
+  refundedUserIds: string[];
+  entryFee: number;
+};
+
 export type ApiErrorCode =
   | 'AUTH_REQUIRED'
   | 'INVALID_TOKEN'
@@ -110,6 +121,7 @@ export type ApiErrorCode =
   | 'ROOM_NOT_PLAYING'
   | 'GAME_NOT_STARTED'
   | 'TURN_NOT_YOURS'
+  | 'PLAYER_FORFEITED'
   | 'INVALID_MOVE'
   | 'NO_VALID_MOVE'
   | 'NOT_ENOUGH_FUNDED_PLAYERS'
@@ -121,7 +133,9 @@ export type ApiErrorCode =
   | 'INVITE_ALREADY_USED'
   | 'INVITE_SELF'
   | 'CHAT_NOT_AVAILABLE'
-  | 'CHAT_INVALID_MESSAGE';
+  | 'CHAT_INVALID_MESSAGE'
+  | 'MATCH_CANCELLED_IDLE'
+  | 'RECONNECT_FAILED';
 
 export type ApiErrorResponse = {
   code: ApiErrorCode;
@@ -272,6 +286,7 @@ export type ServerToClientEvents = {
   host_transferred: (payload: RoomState) => void;
   state_update: (payload: GameStatePayload) => void;
   game_end: (payload: GameEndPayload) => void;
+  game_cancelled: (payload: GameCancelledPayload) => void;
   chat_message: (payload: ChatMessagePayload) => void;
   error: (payload: ApiErrorResponse) => void;
 };

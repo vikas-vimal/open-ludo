@@ -99,6 +99,7 @@ export class RoomsService {
         throw new ApiException('ROOM_NOT_WAITING', 'Room has already started.', HttpStatus.CONFLICT);
       }
       await this.redis.markConnected(roomCode, userId);
+      await this.gameEngine.handlePlayerReconnected(roomCode, userId);
       return this.getRoomStateOrThrow(roomCode);
     }
 
@@ -128,6 +129,7 @@ export class RoomsService {
     }
 
     await this.redis.markConnected(roomCode, userId);
+    await this.gameEngine.handlePlayerReconnected(roomCode, userId);
 
     return this.getRoomStateOrThrow(roomCode);
   }
@@ -280,6 +282,7 @@ export class RoomsService {
   ): Promise<{ roomState: RoomState; hostTransferred: boolean }> {
     const roomCode = normalizeRoomCode(rawRoomCode);
     await this.redis.markDisconnected(roomCode, userId);
+    await this.gameEngine.handlePlayerDisconnected(roomCode, userId);
 
     const hostTransferred = await this.transferHostIfNeeded(roomCode);
     const roomState = await this.getRoomStateOrThrow(roomCode);
@@ -307,6 +310,7 @@ export class RoomsService {
     });
 
     await this.redis.markDisconnected(roomCode, userId);
+    await this.gameEngine.handlePlayerDisconnected(roomCode, userId);
 
     const hostTransferred = await this.transferHostIfNeeded(roomCode);
     const roomState = await this.getRoomStateOrThrow(roomCode);

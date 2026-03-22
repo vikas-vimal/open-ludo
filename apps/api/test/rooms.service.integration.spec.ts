@@ -57,6 +57,8 @@ describe('RoomsService workflow', () => {
 
   const gameEngine = {
     initializeGame: vi.fn(),
+    handlePlayerDisconnected: vi.fn(),
+    handlePlayerReconnected: vi.fn(),
   };
   const economy = {
     prepareMatchStart: vi.fn(),
@@ -70,6 +72,8 @@ describe('RoomsService workflow', () => {
     prisma.room.update.mockResolvedValue({ id: 'room-1' });
     prisma.roomPlayer.upsert.mockResolvedValue({});
     gameEngine.initializeGame.mockResolvedValue({ roomCode: 'ABC123', state: {} });
+    gameEngine.handlePlayerDisconnected.mockResolvedValue(undefined);
+    gameEngine.handlePlayerReconnected.mockResolvedValue(undefined);
     economy.prepareMatchStart.mockResolvedValue({
       entryFee: 100,
       pot: 200,

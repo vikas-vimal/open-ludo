@@ -41,6 +41,7 @@ describe('EconomyService', () => {
       roomId: 'room-1',
       entryFee: ENTRY_FEE_COINS,
       pot: 200,
+      participantUserIds: ['u1', 'u2'],
       winnerUserId: null,
       status: 'PENDING',
     });
@@ -149,6 +150,72 @@ describe('EconomyService', () => {
       winnerUserId: 'u1',
       entryFee: ENTRY_FEE_COINS,
       pot: 200,
+    });
+  });
+
+  it('cancels idle match and refunds each participant exactly once', async () => {
+    tx.matchSettlement.findUnique.mockResolvedValueOnce({
+      id: 'settlement-1',
+      roomId: 'room-1',
+      entryFee: ENTRY_FEE_COINS,
+      pot: 200,
+      participantUserIds: ['u1', 'u2'],
+      winnerUserId: null,
+      status: 'PENDING',
+    });
+    tx.matchSettlement.updateMany.mockResolvedValueOnce({ count: 1 });
+
+    const cancelled = await service.cancelMatchForInactivity('ABC123');
+
+    expect(tx.matchSettlement.updateMany).toHaveBeenCalledWith({
+      where: { id: 'settlement-1', status: 'PENDING' },
+      data: expect.objectContaining({
+        status: 'CANCELLED',
+        cancelledReason: 'idle_timeout',
+      }),
+    });
+    expect(tx.wallet.update).toHaveBeenCalledWith({
+      where: { userId: 'u1' },
+      data: { coinBalance: { increment: ENTRY_FEE_COINS } },
+    });
+    expect(tx.wallet.update).toHaveBeenCalledWith({
+      where: { userId: 'u2' },
+      data: { coinBalance: { increment: ENTRY_FEE_COINS } },
+    });
+    expect(tx.walletTransaction.create).toHaveBeenCalledWith({
+      data: {
+        userId: 'u1',
+        settlementId: 'settlement-1',
+        kind: 'REFUND',
+        amount: ENTRY_FEE_COINS,
+      },
+    });
+    expect(cancelled).toEqual({
+      entryFee: ENTRY_FEE_COINS,
+      pot: 200,
+      refundedUserIds: ['u1', 'u2'],
+    });
+  });
+
+  it('returns existing cancelled summary without double refund', async () => {
+    tx.matchSettlement.findUnique.mockResolvedValueOnce({
+      id: 'settlement-1',
+      roomId: 'room-1',
+      entryFee: ENTRY_FEE_COINS,
+      pot: 200,
+      participantUserIds: ['u1', 'u2'],
+      winnerUserId: null,
+      status: 'CANCELLED',
+    });
+
+    const cancelled = await service.cancelMatchForInactivity('ABC123');
+
+    expect(tx.matchSettlement.updateMany).not.toHaveBeenCalled();
+    expect(tx.wallet.update).not.toHaveBeenCalled();
+    expect(cancelled).toEqual({
+      entryFee: ENTRY_FEE_COINS,
+      pot: 200,
+      refundedUserIds: ['u1', 'u2'],
     });
   });
 });

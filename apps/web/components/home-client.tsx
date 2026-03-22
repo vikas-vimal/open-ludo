@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { api, ApiClientError } from '../lib/api';
+import { toFriendlyErrorMessage } from '../lib/error-messages';
 import {
   clearPendingFriendInvite,
   clearSession,
@@ -19,9 +20,11 @@ export function HomeClient(): JSX.Element {
   const [joinCode, setJoinCode] = useState('');
   const [maxPlayers, setMaxPlayers] = useState<2 | 3 | 4>(4);
   const [status, setStatus] = useState('Create a guest identity or sign in, then open a room.');
+  const [error, setError] = useState<string | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [coinBalance, setCoinBalance] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
+  const [bootstrapping, setBootstrapping] = useState(true);
   const [hasSupabase, setHasSupabase] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -41,23 +44,42 @@ export function HomeClient(): JSX.Element {
       }
     }
 
-    const supabase = getSupabaseClient();
-    setHasSupabase(Boolean(supabase));
-    if (!supabase) {
-      return;
-    }
-
-    void supabase.auth.getSession().then(async ({ data }) => {
-      const accessToken = data.session?.access_token;
-      if (!accessToken) {
+    let active = true;
+    const bootstrap = async (): Promise<void> => {
+      const supabase = getSupabaseClient();
+      setHasSupabase(Boolean(supabase));
+      if (!supabase) {
+        if (active) {
+          setBootstrapping(false);
+        }
         return;
       }
 
-      await syncRegisteredSession(accessToken, guestTokenRef.current);
+      const { data } = await supabase.auth.getSession();
+      const accessToken = data.session?.access_token;
+      if (accessToken) {
+        await syncRegisteredSession(accessToken, guestTokenRef.current);
+      }
+
+      if (active) {
+        setBootstrapping(false);
+      }
+    };
+
+    void bootstrap().catch(() => {
+      if (active) {
+        setError('Could not restore auth session. You can still continue as guest.');
+        setBootstrapping(false);
+      }
     });
+
+    return () => {
+      active = false;
+    };
   }, []);
 
-  const canCreate = useMemo(() => !loading && maxPlayers >= 2 && maxPlayers <= 4, [loading, maxPlayers]);
+  const busy = loading || bootstrapping;
+  const canCreate = useMemo(() => !busy && maxPlayers >= 2 && maxPlayers <= 4, [busy, maxPlayers]);
 
   async function syncRegisteredSession(accessToken: string, guestToken: string | null): Promise<void> {
     setToken(accessToken);
@@ -116,8 +138,9 @@ export function HomeClient(): JSX.Element {
       if (user.kind === 'registered') {
         guestTokenRef.current = null;
       }
+      setError(null);
     } catch {
-      setStatus('Supabase session detected but API token validation failed.');
+      setError('Supabase session detected but API token validation failed. Please sign in again.');
     }
   }
 
@@ -138,6 +161,7 @@ export function HomeClient(): JSX.Element {
     guestTokenRef.current = result.accessToken;
     setStatus(`Guest ready: ${result.user.displayName}`);
     setCoinBalance(result.user.coinBalance);
+    setError(null);
     return result.accessToken;
   }
 
@@ -151,11 +175,12 @@ export function HomeClient(): JSX.Element {
       guestTokenRef.current = result.accessToken;
       setStatus(`Guest session created for ${result.user.displayName}`);
       setCoinBalance(result.user.coinBalance);
+      setError(null);
     } catch (error) {
       if (error instanceof ApiClientError) {
-        setStatus(error.message);
+        setError(toFriendlyErrorMessage(error.code, error.message));
       } else {
-        setStatus('Failed to create guest session.');
+        setError('Failed to create guest session.');
       }
     } finally {
       setLoading(false);
@@ -167,12 +192,13 @@ export function HomeClient(): JSX.Element {
     try {
       const accessToken = await ensureGuestSession();
       const created = await api.createRoom(maxPlayers, accessToken);
+      setError(null);
       router.push(`/room/${created.room.room.code}`);
     } catch (error) {
       if (error instanceof ApiClientError) {
-        setStatus(error.message);
+        setError(toFriendlyErrorMessage(error.code, error.message));
       } else {
-        setStatus('Failed to create room.');
+        setError('Failed to create room.');
       }
     } finally {
       setLoading(false);
@@ -182,7 +208,7 @@ export function HomeClient(): JSX.Element {
   async function handleSignInWithGoogle(): Promise<void> {
     const supabase = getSupabaseClient();
     if (!supabase) {
-      setStatus('Supabase is not configured in NEXT_PUBLIC_SUPABASE_URL/ANON_KEY.');
+      setError('Supabase is not configured in NEXT_PUBLIC_SUPABASE_URL/ANON_KEY.');
       return;
     }
 
@@ -196,20 +222,20 @@ export function HomeClient(): JSX.Element {
     });
 
     if (error) {
-      setStatus(error.message);
+      setError(error.message);
     }
   }
 
   async function handleEmailSignUp(): Promise<void> {
     const supabase = getSupabaseClient();
     if (!supabase) {
-      setStatus('Supabase is not configured in NEXT_PUBLIC_SUPABASE_URL/ANON_KEY.');
+      setError('Supabase is not configured in NEXT_PUBLIC_SUPABASE_URL/ANON_KEY.');
       return;
     }
 
     const normalizedEmail = email.trim().toLowerCase();
     if (!normalizedEmail || password.length < 6) {
-      setStatus('Enter a valid email and password (min 6 characters).');
+      setError('Enter a valid email and password (min 6 characters).');
       return;
     }
 
@@ -220,16 +246,18 @@ export function HomeClient(): JSX.Element {
         password,
       });
       if (error) {
-        setStatus(error.message);
+        setError(error.message);
         return;
       }
 
       const accessToken = data.session?.access_token;
       if (!accessToken) {
         setStatus('Sign-up successful. Check your email to verify the account, then sign in.');
+        setError(null);
         return;
       }
 
+      setError(null);
       await syncRegisteredSession(accessToken, guestTokenRef.current);
     } finally {
       setLoading(false);
@@ -239,13 +267,13 @@ export function HomeClient(): JSX.Element {
   async function handleEmailSignIn(): Promise<void> {
     const supabase = getSupabaseClient();
     if (!supabase) {
-      setStatus('Supabase is not configured in NEXT_PUBLIC_SUPABASE_URL/ANON_KEY.');
+      setError('Supabase is not configured in NEXT_PUBLIC_SUPABASE_URL/ANON_KEY.');
       return;
     }
 
     const normalizedEmail = email.trim().toLowerCase();
     if (!normalizedEmail || password.length < 6) {
-      setStatus('Enter a valid email and password (min 6 characters).');
+      setError('Enter a valid email and password (min 6 characters).');
       return;
     }
 
@@ -256,16 +284,17 @@ export function HomeClient(): JSX.Element {
         password,
       });
       if (error) {
-        setStatus(error.message);
+        setError(error.message);
         return;
       }
 
       const accessToken = data.session?.access_token;
       if (!accessToken) {
-        setStatus('Sign-in succeeded but no access token was returned.');
+        setError('Sign-in succeeded but no access token was returned.');
         return;
       }
 
+      setError(null);
       await syncRegisteredSession(accessToken, guestTokenRef.current);
     } finally {
       setLoading(false);
@@ -288,13 +317,13 @@ export function HomeClient(): JSX.Element {
       </div>
 
       <div className="row">
-        <button className="primary" onClick={handleGuest} disabled={loading}>
+        <button className="primary" onClick={handleGuest} disabled={busy}>
           Continue as Guest
         </button>
-        <button className="secondary" onClick={handleSignInWithGoogle} disabled={!hasSupabase || loading}>
+        <button className="secondary" onClick={handleSignInWithGoogle} disabled={!hasSupabase || busy}>
           Sign In with Google
         </button>
-        <button onClick={() => router.push('/profile')} disabled={!token || loading}>
+        <button onClick={() => router.push('/profile')} disabled={!token || busy}>
           Profile
         </button>
         <button
@@ -304,8 +333,9 @@ export function HomeClient(): JSX.Element {
             setCoinBalance(null);
             guestTokenRef.current = null;
             setStatus('Session cleared.');
+            setError(null);
           }}
-          disabled={loading}
+          disabled={busy}
         >
           Clear Session
         </button>
@@ -335,10 +365,10 @@ export function HomeClient(): JSX.Element {
           />
         </div>
         <div className="row">
-          <button onClick={handleEmailSignIn} disabled={!hasSupabase || loading}>
+          <button onClick={handleEmailSignIn} disabled={!hasSupabase || busy}>
             Sign In with Email
           </button>
-          <button className="secondary" onClick={handleEmailSignUp} disabled={!hasSupabase || loading}>
+          <button className="secondary" onClick={handleEmailSignUp} disabled={!hasSupabase || busy}>
             Sign Up with Email
           </button>
         </div>
@@ -384,13 +414,15 @@ export function HomeClient(): JSX.Element {
             }
             router.push(`/room/${code}`);
           }}
-          disabled={loading}
+          disabled={busy}
         >
           Go to Room
         </button>
       </div>
 
-      <p>{status}</p>
+      {bootstrapping ? <p className="loading-state">Loading your session...</p> : null}
+      <p className="notice notice-info">{status}</p>
+      {error ? <p className="notice notice-error">{error}</p> : null}
       {coinBalance !== null ? <p>Coins: {coinBalance}</p> : null}
       {token ? <p style={{ fontSize: '0.85rem' }}>Session token loaded.</p> : null}
     </section>

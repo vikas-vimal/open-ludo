@@ -19,6 +19,9 @@ describe('GameEngineService', () => {
     deleteKey: vi.fn(async (key: string) => {
       store.delete(key);
     }),
+    markRoomPlaying: vi.fn(async () => undefined),
+    unmarkRoomPlaying: vi.fn(async () => undefined),
+    listPlayingRooms: vi.fn<() => Promise<string[]>>(async () => []),
   };
 
   const prisma = {
@@ -28,6 +31,7 @@ describe('GameEngineService', () => {
   };
   const economy = {
     settleMatch: vi.fn(),
+    cancelMatchForInactivity: vi.fn(),
   };
 
   let service: GameEngineService;
@@ -39,6 +43,11 @@ describe('GameEngineService', () => {
       winnerUserId: 'u1',
       entryFee: 100,
       pot: 200,
+    });
+    economy.cancelMatchForInactivity.mockResolvedValue({
+      entryFee: 100,
+      pot: 200,
+      refundedUserIds: ['u1', 'u2'],
     });
     service = new GameEngineService(redis as never, prisma as never, economy as never);
   });
@@ -82,12 +91,14 @@ describe('GameEngineService', () => {
           displayName: 'Host',
           color: 'RED',
           tokens: [0, -1, -1, -1],
+          isForfeited: false,
         },
         {
           userId: 'u2',
           displayName: 'Guest',
           color: 'GREEN',
           tokens: [44, -1, -1, -1],
+          isForfeited: false,
         },
       ],
       economy: {
@@ -101,6 +112,7 @@ describe('GameEngineService', () => {
       dice: { value: 5, isAuto: false },
       validMoves: [{ tokenIndex: 0, targetProgress: 5 }],
       finishedOrder: [],
+      forfeitedOrder: [],
       lastUpdatedAt: new Date().toISOString(),
     };
     await redis.setJson(gameStateKey('CAP123'), state);
@@ -122,12 +134,14 @@ describe('GameEngineService', () => {
           displayName: 'Host',
           color: 'RED',
           tokens: [2, -1, -1, -1],
+          isForfeited: false,
         },
         {
           userId: 'u2',
           displayName: 'Guest',
           color: 'GREEN',
           tokens: [47, -1, -1, -1],
+          isForfeited: false,
         },
       ],
       economy: {
@@ -141,6 +155,7 @@ describe('GameEngineService', () => {
       dice: { value: 6, isAuto: false },
       validMoves: [{ tokenIndex: 0, targetProgress: 8 }],
       finishedOrder: [],
+      forfeitedOrder: [],
       lastUpdatedAt: new Date().toISOString(),
     };
     await redis.setJson(gameStateKey('SAFE12'), state);
@@ -159,12 +174,14 @@ describe('GameEngineService', () => {
           displayName: 'Host',
           color: 'RED',
           tokens: [55, 56, 56, 56],
+          isForfeited: false,
         },
         {
           userId: 'u2',
           displayName: 'Guest',
           color: 'GREEN',
           tokens: [55, 56, 56, 56],
+          isForfeited: false,
         },
       ],
       economy: {
@@ -178,6 +195,7 @@ describe('GameEngineService', () => {
       dice: { value: 1, isAuto: false },
       validMoves: [{ tokenIndex: 0, targetProgress: 56 }],
       finishedOrder: [],
+      forfeitedOrder: [],
       lastUpdatedAt: new Date().toISOString(),
     };
     await redis.setJson(gameStateKey('END123'), state);
@@ -224,12 +242,14 @@ describe('GameEngineService', () => {
           displayName: 'Host',
           color: 'RED',
           tokens: [0, -1, 2, -1],
+          isForfeited: false,
         },
         {
           userId: 'u2',
           displayName: 'Guest',
           color: 'GREEN',
           tokens: [-1, -1, -1, -1],
+          isForfeited: false,
         },
       ],
       economy: {
@@ -246,6 +266,7 @@ describe('GameEngineService', () => {
         { tokenIndex: 0, targetProgress: 1 },
       ],
       finishedOrder: [],
+      forfeitedOrder: [],
       lastUpdatedAt: new Date().toISOString(),
     };
     await redis.setJson(gameStateKey('TIME02'), state);
@@ -254,5 +275,120 @@ describe('GameEngineService', () => {
     const updated = await service.getState('TIME02');
     expect(updated?.players[0]?.tokens[0]).toBe(1);
     expect(updated?.currentTurnIndex).toBe(1);
+  });
+
+  it('cancels disconnect forfeit when player reconnects within grace window', async () => {
+    vi.useFakeTimers();
+    try {
+      await service.initializeGame('RECON1', [
+        { userId: 'u1', displayName: 'Host' },
+        { userId: 'u2', displayName: 'Guest' },
+      ], {
+        entryFee: 100,
+        pot: 200,
+        participantUserIds: ['u1', 'u2'],
+        skippedUserIds: [],
+      });
+
+      await service.handlePlayerDisconnected('RECON1', 'u1');
+      let state = await service.getState('RECON1');
+      expect(state?.disconnectDeadlineByUserId?.u1).toBeTruthy();
+
+      await service.handlePlayerReconnected('RECON1', 'u1');
+      await vi.advanceTimersByTimeAsync(61_000);
+
+      state = await service.getState('RECON1');
+      expect(state?.disconnectDeadlineByUserId?.u1).toBeUndefined();
+      expect(state?.players[0]?.isForfeited).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('applies forfeit order so earliest forfeit ranks worst', async () => {
+    vi.useFakeTimers();
+    try {
+      await service.initializeGame('FORF01', [
+        { userId: 'u1', displayName: 'Host' },
+        { userId: 'u2', displayName: 'Guest A' },
+        { userId: 'u3', displayName: 'Guest B' },
+      ], {
+        entryFee: 100,
+        pot: 300,
+        participantUserIds: ['u1', 'u2', 'u3'],
+        skippedUserIds: [],
+      });
+
+      await service.handlePlayerDisconnected('FORF01', 'u2');
+      await vi.advanceTimersByTimeAsync(61_000);
+      await service.handlePlayerDisconnected('FORF01', 'u3');
+      await vi.advanceTimersByTimeAsync(61_000);
+
+      expect(economy.settleMatch).toHaveBeenCalledWith('FORF01', [
+        { userId: 'u1', displayName: 'Host', color: 'RED', place: 1 },
+        { userId: 'u3', displayName: 'Guest B', color: 'YELLOW', place: 2 },
+        { userId: 'u2', displayName: 'Guest A', color: 'GREEN', place: 3 },
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('watchdog cancels idle room and ignores fresh room', async () => {
+    const now = Date.now();
+    const idleState: GameState = {
+      roomCode: 'IDLE01',
+      status: 'playing',
+      players: [
+        { userId: 'u1', displayName: 'Host', color: 'RED', tokens: [-1, -1, -1, -1], isForfeited: false },
+        { userId: 'u2', displayName: 'Guest', color: 'GREEN', tokens: [-1, -1, -1, -1], isForfeited: false },
+      ],
+      economy: {
+        entryFee: 100,
+        pot: 200,
+        participantUserIds: ['u1', 'u2'],
+        skippedUserIds: [],
+      },
+      currentTurnIndex: 0,
+      turnPhase: 'await_roll',
+      dice: { value: null, isAuto: false },
+      validMoves: [],
+      finishedOrder: [],
+      forfeitedOrder: [],
+      lastUpdatedAt: new Date(now - 6 * 60 * 1000).toISOString(),
+    };
+    await redis.setJson(gameStateKey('IDLE01'), idleState);
+
+    redis.listPlayingRooms.mockResolvedValueOnce(['IDLE01']);
+    economy.cancelMatchForInactivity.mockResolvedValueOnce({
+      entryFee: 100,
+      pot: 200,
+      refundedUserIds: ['u1', 'u2'],
+    });
+    const publisher = vi.fn();
+    service.setPublisher(publisher);
+
+    await (service as unknown as { runInactivityWatchdog: () => Promise<void> }).runInactivityWatchdog();
+    expect(economy.cancelMatchForInactivity).toHaveBeenCalledWith('IDLE01');
+    expect(publisher).toHaveBeenCalledWith(
+      'game_cancelled',
+      expect.objectContaining({
+        roomCode: 'IDLE01',
+        reason: 'idle_timeout',
+        refundedUserIds: ['u1', 'u2'],
+      }),
+    );
+
+    const freshState = {
+      ...idleState,
+      roomCode: 'FRESH1',
+      lastUpdatedAt: new Date(now).toISOString(),
+    };
+    await redis.setJson(gameStateKey('FRESH1'), freshState);
+    redis.listPlayingRooms.mockResolvedValueOnce(['FRESH1']);
+    economy.cancelMatchForInactivity.mockClear();
+
+    await (service as unknown as { runInactivityWatchdog: () => Promise<void> }).runInactivityWatchdog();
+    expect(economy.cancelMatchForInactivity).not.toHaveBeenCalled();
   });
 });

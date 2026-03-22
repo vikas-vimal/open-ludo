@@ -1,5 +1,6 @@
-import { HttpStatus, Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
+import { HttpStatus, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import type {
+  GameCancelledPayload,
   GameEndPayload,
   GameState,
   GameStatePayload,
@@ -13,10 +14,13 @@ import { ApiException } from '../common/errors.js';
 import { EconomyService } from '../economy/economy.service.js';
 import {
   COLOR_START_INDEX,
+  DISCONNECT_FORFEIT_SECONDS,
   GAME_STATE_TTL_SECONDS,
   PLAYER_COLORS,
   SAFE_MAIN_TRACK_CELLS,
   TURN_TIMEOUT_SECONDS,
+  WATCHDOG_IDLE_CANCEL_SECONDS,
+  WATCHDOG_INTERVAL_SECONDS,
 } from './game.constants.js';
 
 type StartPlayer = {
@@ -29,14 +33,19 @@ type EngineResult = {
   gameEndPayload?: GameEndPayload;
 };
 
-type PublishEventType = 'state_update' | 'game_end';
-type PublishFn = (event: PublishEventType, payload: GameStatePayload | GameEndPayload) => Promise<void> | void;
+type PublishEventType = 'state_update' | 'game_end' | 'game_cancelled';
+type PublishFn = (
+  event: PublishEventType,
+  payload: GameStatePayload | GameEndPayload | GameCancelledPayload,
+) => Promise<void> | void;
 
 @Injectable()
-export class GameEngineService implements OnModuleDestroy {
+export class GameEngineService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(GameEngineService.name);
   private readonly roomLocks = new Map<string, Promise<void>>();
-  private readonly timers = new Map<string, NodeJS.Timeout>();
+  private readonly turnTimers = new Map<string, NodeJS.Timeout>();
+  private readonly disconnectForfeitTimers = new Map<string, NodeJS.Timeout>();
+  private watchdogTimer: NodeJS.Timeout | null = null;
   private publisher?: PublishFn;
 
   constructor(
@@ -44,6 +53,14 @@ export class GameEngineService implements OnModuleDestroy {
     private readonly prisma: PrismaService,
     private readonly economy: EconomyService,
   ) {}
+
+  onModuleInit(): void {
+    this.watchdogTimer = setInterval(() => {
+      void this.runInactivityWatchdog().catch((error: unknown) => {
+        this.logger.error('Inactivity watchdog failed', error as Error);
+      });
+    }, WATCHDOG_INTERVAL_SECONDS * 1000);
+  }
 
   setPublisher(publisher: PublishFn): void {
     this.publisher = publisher;
@@ -69,6 +86,7 @@ export class GameEngineService implements OnModuleDestroy {
         displayName: player.displayName,
         color: PLAYER_COLORS[index] as PlayerColor,
         tokens: [-1, -1, -1, -1],
+        isForfeited: false,
       }));
 
       const state: GameState = {
@@ -89,11 +107,15 @@ export class GameEngineService implements OnModuleDestroy {
         },
         validMoves: [],
         finishedOrder: [],
+        forfeitedOrder: [],
+        disconnectDeadlineByUserId: undefined,
         lastUpdatedAt: new Date().toISOString(),
       };
 
+      this.clearRoomDisconnectForfeitTimers(roomCode);
       this.scheduleTurnTimeout(state);
       await this.persistState(state);
+      await this.redis.markRoomPlaying(roomCode);
       return { roomCode, state };
     });
   }
@@ -106,6 +128,7 @@ export class GameEngineService implements OnModuleDestroy {
     return this.withRoomLock(roomCode, async () => {
       const state = await this.loadStateOrThrow(roomCode);
       this.assertPlayingState(state);
+      this.assertPlayerNotForfeited(state, userId);
       this.assertCurrentTurn(state, userId);
 
       if (state.turnPhase !== 'await_roll') {
@@ -122,6 +145,7 @@ export class GameEngineService implements OnModuleDestroy {
     return this.withRoomLock(roomCode, async () => {
       const state = await this.loadStateOrThrow(roomCode);
       this.assertPlayingState(state);
+      this.assertPlayerNotForfeited(state, userId);
       this.assertCurrentTurn(state, userId);
 
       if (state.turnPhase !== 'await_move') {
@@ -155,8 +179,17 @@ export class GameEngineService implements OnModuleDestroy {
 
         if (!autoMove) {
           this.advanceTurn(state);
-          state.lastUpdatedAt = new Date().toISOString();
-          result = { statePayload: { roomCode, state } };
+          if (this.shouldFinalizeGame(state)) {
+            const gameEnd = this.finalizeGame(state);
+            state.lastUpdatedAt = new Date().toISOString();
+            result = {
+              statePayload: { roomCode, state },
+              gameEndPayload: gameEnd,
+            };
+          } else {
+            state.lastUpdatedAt = new Date().toISOString();
+            result = { statePayload: { roomCode, state } };
+          }
         } else {
           result = this.executeMoveInternal(state, autoMove.tokenIndex, true);
         }
@@ -169,11 +202,71 @@ export class GameEngineService implements OnModuleDestroy {
     });
   }
 
+  async handlePlayerDisconnected(roomCode: string, userId: string): Promise<void> {
+    await this.withRoomLock(roomCode, async () => {
+      const state = await this.getState(roomCode);
+      if (!state || state.status !== 'playing') {
+        return;
+      }
+
+      const player = state.players.find((candidate) => candidate.userId === userId);
+      if (!player || player.isForfeited || this.isPlayerFinished(player)) {
+        return;
+      }
+
+      if ((state.disconnectDeadlineByUserId?.[userId] ?? '').length > 0) {
+        return;
+      }
+
+      if (this.countUnfinishedContenders(state) <= 1) {
+        return;
+      }
+
+      const deadline = new Date(Date.now() + DISCONNECT_FORFEIT_SECONDS * 1000).toISOString();
+      this.setDisconnectDeadline(state, userId, deadline);
+      this.scheduleDisconnectForfeit(roomCode, userId, deadline);
+      state.lastUpdatedAt = new Date().toISOString();
+
+      await this.persistState(state);
+      await this.publishStateUpdate(state);
+    });
+  }
+
+  async handlePlayerReconnected(roomCode: string, userId: string): Promise<void> {
+    await this.withRoomLock(roomCode, async () => {
+      const state = await this.getState(roomCode);
+      if (!state || state.status !== 'playing') {
+        return;
+      }
+
+      if (!state.disconnectDeadlineByUserId?.[userId]) {
+        return;
+      }
+
+      this.clearDisconnectDeadline(state, userId);
+      this.clearDisconnectForfeitTimer(roomCode, userId);
+      state.lastUpdatedAt = new Date().toISOString();
+
+      await this.persistState(state);
+      await this.publishStateUpdate(state);
+    });
+  }
+
   async onModuleDestroy(): Promise<void> {
-    for (const timer of this.timers.values()) {
+    for (const timer of this.turnTimers.values()) {
       clearTimeout(timer);
     }
-    this.timers.clear();
+    this.turnTimers.clear();
+
+    for (const timer of this.disconnectForfeitTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.disconnectForfeitTimers.clear();
+
+    if (this.watchdogTimer) {
+      clearInterval(this.watchdogTimer);
+      this.watchdogTimer = null;
+    }
   }
 
   private async persistAndSchedule(result: EngineResult): Promise<void> {
@@ -195,7 +288,11 @@ export class GameEngineService implements OnModuleDestroy {
           entryFee: settlement.entryFee,
         };
       }
+
+      this.clearTurnTimeout(result.gameEndPayload.roomCode);
+      this.clearRoomDisconnectForfeitTimers(result.gameEndPayload.roomCode);
       await this.markRoomFinished(result.gameEndPayload.roomCode);
+      await this.redis.unmarkRoomPlaying(result.gameEndPayload.roomCode);
     }
 
     await this.persistState(result.statePayload.state);
@@ -210,6 +307,10 @@ export class GameEngineService implements OnModuleDestroy {
     return `room:${roomCode}:game_state`;
   }
 
+  private disconnectTimerKey(roomCode: string, userId: string): string {
+    return `${roomCode}:${userId}`;
+  }
+
   private async loadStateOrThrow(roomCode: string): Promise<GameState> {
     const state = await this.getState(roomCode);
     if (!state) {
@@ -221,6 +322,17 @@ export class GameEngineService implements OnModuleDestroy {
   private assertPlayingState(state: GameState): void {
     if (state.status !== 'playing') {
       throw new ApiException('ROOM_NOT_PLAYING', 'Room is not currently playing.', HttpStatus.CONFLICT);
+    }
+  }
+
+  private assertPlayerNotForfeited(state: GameState, userId: string): void {
+    const player = state.players.find((candidate) => candidate.userId === userId);
+    if (!player) {
+      return;
+    }
+
+    if (player.isForfeited) {
+      throw new ApiException('PLAYER_FORFEITED', 'Forfeited players cannot act in this match.', HttpStatus.FORBIDDEN);
     }
   }
 
@@ -281,8 +393,7 @@ export class GameEngineService implements OnModuleDestroy {
       state.finishedOrder.push(currentPlayer.userId);
     }
 
-    const shouldFinish = state.finishedOrder.length >= state.players.length - 1;
-    if (shouldFinish) {
+    if (this.shouldFinalizeGame(state)) {
       const gameEnd = this.finalizeGame(state);
       state.lastUpdatedAt = new Date().toISOString();
       return {
@@ -317,40 +428,91 @@ export class GameEngineService implements OnModuleDestroy {
   }
 
   private finalizeGame(state: GameState): GameEndPayload {
-    for (const player of state.players) {
-      if (!state.finishedOrder.includes(player.userId)) {
-        state.finishedOrder.push(player.userId);
-      }
-    }
+    const placements: PlacementEntry[] = [];
+    const seen = new Set<string>();
 
-    const placements: PlacementEntry[] = state.finishedOrder.map((userId, index) => {
+    for (const userId of state.finishedOrder) {
       const player = state.players.find((candidate) => candidate.userId === userId);
-      if (!player) {
-        throw new ApiException('INVALID_MOVE', 'Placement player missing.', HttpStatus.CONFLICT);
+      if (!player || player.isForfeited || seen.has(userId)) {
+        continue;
       }
-      player.finishedRank = index + 1;
-      return {
+      placements.push({
         userId: player.userId,
         displayName: player.displayName,
         color: player.color,
-        place: index + 1,
-      };
-    });
+        place: placements.length + 1,
+      });
+      seen.add(userId);
+    }
+
+    for (const player of state.players) {
+      if (player.isForfeited || seen.has(player.userId)) {
+        continue;
+      }
+      placements.push({
+        userId: player.userId,
+        displayName: player.displayName,
+        color: player.color,
+        place: placements.length + 1,
+      });
+      seen.add(player.userId);
+    }
+
+    const forfeitedRanking = state.forfeitedOrder.slice().reverse();
+    for (const userId of forfeitedRanking) {
+      const player = state.players.find((candidate) => candidate.userId === userId);
+      if (!player || seen.has(userId)) {
+        continue;
+      }
+
+      placements.push({
+        userId: player.userId,
+        displayName: player.displayName,
+        color: player.color,
+        place: placements.length + 1,
+      });
+      seen.add(userId);
+    }
+
+    for (const player of state.players) {
+      if (seen.has(player.userId)) {
+        continue;
+      }
+      placements.push({
+        userId: player.userId,
+        displayName: player.displayName,
+        color: player.color,
+        place: placements.length + 1,
+      });
+      seen.add(player.userId);
+    }
+
     const winner = placements[0];
     if (!winner) {
       throw new ApiException('INVALID_MOVE', 'Winner could not be determined.', HttpStatus.CONFLICT);
+    }
+
+    state.finishedOrder = placements.filter((entry) => !this.isPlayerForfeited(state, entry.userId)).map((entry) => entry.userId);
+
+    for (const entry of placements) {
+      const player = state.players.find((candidate) => candidate.userId === entry.userId);
+      if (player) {
+        player.finishedRank = entry.place;
+      }
     }
 
     state.status = 'finished';
     state.turnPhase = 'finished';
     state.validMoves = [];
     state.turnDeadlineAt = undefined;
+    state.disconnectDeadlineByUserId = undefined;
     state.dice = {
       value: null,
       isAuto: false,
     };
 
     this.clearTurnTimeout(state.roomCode);
+    this.clearRoomDisconnectForfeitTimers(state.roomCode);
 
     return {
       roomCode: state.roomCode,
@@ -367,7 +529,7 @@ export class GameEngineService implements OnModuleDestroy {
     for (let step = 1; step <= total; step += 1) {
       const candidate = (state.currentTurnIndex + step) % total;
       const player = state.players[candidate];
-      if (!player || this.isPlayerFinished(player)) {
+      if (!player || player.isForfeited || this.isPlayerFinished(player)) {
         continue;
       }
 
@@ -434,7 +596,7 @@ export class GameEngineService implements OnModuleDestroy {
       }
 
       const opponent = state.players[index];
-      if (!opponent) {
+      if (!opponent || opponent.isForfeited) {
         continue;
       }
 
@@ -465,6 +627,25 @@ export class GameEngineService implements OnModuleDestroy {
     return player.tokens.every((token) => token === 56);
   }
 
+  private isPlayerForfeited(state: GameState, userId: string): boolean {
+    const player = state.players.find((candidate) => candidate.userId === userId);
+    return Boolean(player?.isForfeited);
+  }
+
+  private shouldFinalizeGame(state: GameState): boolean {
+    const contenders = state.players.filter((player) => !player.isForfeited);
+    if (contenders.length === 0) {
+      return false;
+    }
+
+    const unfinishedContenders = contenders.filter((player) => !this.isPlayerFinished(player));
+    return unfinishedContenders.length <= 1;
+  }
+
+  private countUnfinishedContenders(state: GameState): number {
+    return state.players.filter((player) => !player.isForfeited && !this.isPlayerFinished(player)).length;
+  }
+
   private randomDice(): number {
     return Math.floor(Math.random() * 6) + 1;
   }
@@ -486,15 +667,203 @@ export class GameEngineService implements OnModuleDestroy {
       });
     }, TURN_TIMEOUT_SECONDS * 1000);
 
-    this.timers.set(state.roomCode, timer);
+    this.turnTimers.set(state.roomCode, timer);
   }
 
   private clearTurnTimeout(roomCode: string): void {
-    const existing = this.timers.get(roomCode);
+    const existing = this.turnTimers.get(roomCode);
     if (existing) {
       clearTimeout(existing);
-      this.timers.delete(roomCode);
+      this.turnTimers.delete(roomCode);
     }
+  }
+
+  private scheduleDisconnectForfeit(roomCode: string, userId: string, deadlineIso: string): void {
+    this.clearDisconnectForfeitTimer(roomCode, userId);
+
+    const delay = Math.max(0, new Date(deadlineIso).getTime() - Date.now());
+    const key = this.disconnectTimerKey(roomCode, userId);
+    const timer = setTimeout(() => {
+      void this.handleDisconnectForfeitTimeout(roomCode, userId, deadlineIso).catch((error: unknown) => {
+        this.logger.error(`Disconnect forfeit timeout failed for room ${roomCode}`, error as Error);
+      });
+    }, delay);
+
+    this.disconnectForfeitTimers.set(key, timer);
+  }
+
+  private clearDisconnectForfeitTimer(roomCode: string, userId: string): void {
+    const key = this.disconnectTimerKey(roomCode, userId);
+    const existing = this.disconnectForfeitTimers.get(key);
+    if (!existing) {
+      return;
+    }
+
+    clearTimeout(existing);
+    this.disconnectForfeitTimers.delete(key);
+  }
+
+  private clearRoomDisconnectForfeitTimers(roomCode: string): void {
+    for (const [key, timer] of this.disconnectForfeitTimers.entries()) {
+      if (!key.startsWith(`${roomCode}:`)) {
+        continue;
+      }
+
+      clearTimeout(timer);
+      this.disconnectForfeitTimers.delete(key);
+    }
+  }
+
+  private setDisconnectDeadline(state: GameState, userId: string, deadlineIso: string): void {
+    const next = {
+      ...(state.disconnectDeadlineByUserId ?? {}),
+      [userId]: deadlineIso,
+    };
+    state.disconnectDeadlineByUserId = next;
+  }
+
+  private clearDisconnectDeadline(state: GameState, userId: string): void {
+    if (!state.disconnectDeadlineByUserId?.[userId]) {
+      return;
+    }
+
+    const next = { ...state.disconnectDeadlineByUserId };
+    delete next[userId];
+    state.disconnectDeadlineByUserId = Object.keys(next).length > 0 ? next : undefined;
+  }
+
+  private async handleDisconnectForfeitTimeout(
+    roomCode: string,
+    userId: string,
+    expectedDeadlineIso: string,
+  ): Promise<void> {
+    await this.withRoomLock(roomCode, async () => {
+      const state = await this.getState(roomCode);
+      if (!state || state.status !== 'playing') {
+        return;
+      }
+
+      const currentDeadline = state.disconnectDeadlineByUserId?.[userId];
+      if (!currentDeadline || currentDeadline !== expectedDeadlineIso) {
+        return;
+      }
+
+      if (Date.now() < new Date(currentDeadline).getTime()) {
+        return;
+      }
+
+      this.clearDisconnectDeadline(state, userId);
+      this.clearDisconnectForfeitTimer(roomCode, userId);
+
+      const player = state.players.find((candidate) => candidate.userId === userId);
+      if (!player || player.isForfeited || this.isPlayerFinished(player)) {
+        return;
+      }
+
+      player.isForfeited = true;
+      if (!state.forfeitedOrder.includes(userId)) {
+        state.forfeitedOrder.push(userId);
+      }
+
+      if (state.currentTurnIndex >= 0 && state.players[state.currentTurnIndex]?.userId === userId) {
+        this.advanceTurn(state);
+        this.scheduleTurnTimeout(state);
+      }
+
+      if (this.shouldFinalizeGame(state)) {
+        const gameEnd = this.finalizeGame(state);
+        state.lastUpdatedAt = new Date().toISOString();
+        const result: EngineResult = {
+          statePayload: {
+            roomCode,
+            state,
+          },
+          gameEndPayload: gameEnd,
+        };
+
+        await this.persistAndSchedule(result);
+        await this.publishFromResult(result);
+        return;
+      }
+
+      state.lastUpdatedAt = new Date().toISOString();
+      await this.persistState(state);
+      await this.publishStateUpdate(state);
+    });
+  }
+
+  private async runInactivityWatchdog(): Promise<void> {
+    const playingRooms = await this.redis.listPlayingRooms();
+    for (const roomCode of playingRooms) {
+      await this.withRoomLock(roomCode, async () => {
+        const state = await this.getState(roomCode);
+        if (!state || state.status !== 'playing') {
+          await this.redis.unmarkRoomPlaying(roomCode);
+          return;
+        }
+
+        const lastUpdatedAt = new Date(state.lastUpdatedAt).getTime();
+        if (Number.isNaN(lastUpdatedAt)) {
+          return;
+        }
+
+        const idleMs = Date.now() - lastUpdatedAt;
+        if (idleMs < WATCHDOG_IDLE_CANCEL_SECONDS * 1000) {
+          return;
+        }
+
+        await this.cancelGameForInactivity(roomCode, state);
+      }).catch((error: unknown) => {
+        this.logger.error(`Watchdog room check failed for ${roomCode}`, error as Error);
+      });
+    }
+  }
+
+  private async cancelGameForInactivity(roomCode: string, state: GameState): Promise<void> {
+    const cancelled = await this.economy.cancelMatchForInactivity(roomCode);
+
+    state.status = 'finished';
+    state.turnPhase = 'finished';
+    state.validMoves = [];
+    state.turnDeadlineAt = undefined;
+    state.disconnectDeadlineByUserId = undefined;
+    state.dice = {
+      value: null,
+      isAuto: false,
+    };
+    state.lastUpdatedAt = new Date().toISOString();
+
+    this.clearTurnTimeout(roomCode);
+    this.clearRoomDisconnectForfeitTimers(roomCode);
+
+    await this.persistState(state);
+    await this.markRoomFinished(roomCode);
+    await this.redis.unmarkRoomPlaying(roomCode);
+
+    if (!cancelled || !this.publisher) {
+      return;
+    }
+
+    const payload: GameCancelledPayload = {
+      roomCode,
+      state,
+      reason: 'idle_timeout',
+      refundedUserIds: cancelled.refundedUserIds,
+      entryFee: cancelled.entryFee,
+    };
+
+    await this.publisher('game_cancelled', payload);
+  }
+
+  private async publishStateUpdate(state: GameState): Promise<void> {
+    if (!this.publisher) {
+      return;
+    }
+
+    await this.publisher('state_update', {
+      roomCode: state.roomCode,
+      state,
+    });
   }
 
   private async publishFromResult(result: EngineResult): Promise<void> {
