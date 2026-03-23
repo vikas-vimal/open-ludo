@@ -1,12 +1,14 @@
 import { HttpStatus, Injectable } from '@nestjs/common';
 import type { AuthContext, CreateGuestResponse, UpgradeGuestResponse } from '@open-ludo/contracts';
-import jwt, { JsonWebTokenError, JwtPayload } from 'jsonwebtoken';
+import jwt from 'jsonwebtoken';
+import type { JwtPayload } from 'jsonwebtoken';
 import { randomUUID } from 'node:crypto';
 import { ApiException } from '../common/errors.js';
 import { getEnv } from '../common/env.js';
 import { UsersService } from '../users/users.service.js';
 
 const GUEST_ISSUER = 'open-ludo-guest';
+const { JsonWebTokenError } = jwt;
 
 type GuestClaims = JwtPayload & {
   sub: string;
