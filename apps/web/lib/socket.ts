@@ -12,7 +12,9 @@ export function createLobbySocket(
       token,
     },
     autoConnect: false,
-    transports: ['websocket', 'polling'],
+    // Koyeb/Web proxy deployments are significantly more stable with direct websocket transport.
+    transports: ['websocket'],
+    upgrade: false,
     reconnection: true,
     reconnectionAttempts: Infinity,
   });

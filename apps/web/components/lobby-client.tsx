@@ -15,7 +15,9 @@ import type { Socket } from 'socket.io-client';
 import { api, ApiClientError } from '../lib/api';
 import { readToken, saveSession } from '../lib/auth-store';
 import { toFriendlyErrorMessage } from '../lib/error-messages';
+import { MAIN_TRACK_COORDINATES } from '../lib/ludo-track';
 import { createLobbySocket } from '../lib/socket';
+import { getSocketTransportErrorMessage, isApiErrorResponsePayload } from '../lib/socket-error';
 
 type LobbyClientProps = {
   roomCode: string;
@@ -253,12 +255,29 @@ export function LobbyClient({ roomCode }: LobbyClientProps) {
       setStatus('Connected to room.');
       setError(null);
     });
-    socket.on('disconnect', () => {
+    socket.on('disconnect', (reason) => {
       if (!aliveRef.current) {
+        return;
+      }
+      if (reason === 'io client disconnect') {
         return;
       }
       setConnectionState('reconnecting');
       setStatus('Connection lost. Reconnecting...');
+    });
+    socket.on('connect_error', (caught) => {
+      if (!aliveRef.current) {
+        return;
+      }
+
+      const candidate = caught as { data?: unknown; message?: unknown };
+      if (isApiErrorResponsePayload(candidate?.data)) {
+        applyClientError(candidate.data.code, candidate.data.message);
+        return;
+      }
+
+      setConnectionState('reconnecting');
+      setStatus(`${getSocketTransportErrorMessage(caught)}. Reconnecting...`);
     });
     socket.io.on('reconnect_attempt', () => {
       if (!aliveRef.current) {
@@ -317,7 +336,17 @@ export function LobbyClient({ roomCode }: LobbyClientProps) {
       void refreshMeBalance(token);
     });
     socket.on('error', (payload) => {
-      applyClientError(payload.code, payload.message);
+      if (isApiErrorResponsePayload(payload)) {
+        applyClientError(payload.code, payload.message);
+        return;
+      }
+
+      if (!aliveRef.current) {
+        return;
+      }
+
+      setConnectionState('reconnecting');
+      setStatus(`${getSocketTransportErrorMessage(payload)}. Reconnecting...`);
     });
     socket.on('chat_message', (payload) => {
       setChatMessages((previous) => [...previous.slice(-99), payload]);
@@ -709,43 +738,6 @@ export function LobbyClient({ roomCode }: LobbyClientProps) {
           </section>
 
           <section className="panel stack">
-            <h3>Main Track (52 cells)</h3>
-            <div className="board-scroll">
-              <div className="board-grid">
-              {Array.from({ length: 52 }).map((_, cell) => {
-                const occupants = trackOccupants.get(cell) ?? [];
-                const isHighlighted = highlightedCells.includes(cell);
-                return (
-                  <div
-                    key={cell}
-                    className={`board-cell ${SAFE_CELLS.has(cell) ? 'board-cell-safe' : ''} ${isHighlighted ? 'board-cell-highlight' : ''}`}
-                  >
-                    <div style={{ fontSize: 11, color: '#7a6455' }}>#{cell}</div>
-                    <div className="row">
-                      {occupants.map((token) => (
-                        <span
-                          key={`${token.playerName}-${token.tokenIndex}`}
-                          title={`${token.playerName} token ${token.tokenIndex + 1}`}
-                          className="token-dot"
-                          style={{
-                            width: 16,
-                            height: 16,
-                            borderRadius: 999,
-                            background: COLOR_STYLE[token.color],
-                            display: 'inline-block',
-                            boxShadow: isHighlighted ? '0 0 0 2px rgba(241, 143, 1, 0.35)' : 'none',
-                          }}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                );
-              })}
-              </div>
-            </div>
-          </section>
-
-          <section className="panel stack">
             <h3>Your Token Moves</h3>
             {gameState && me ? (
               <>
@@ -839,6 +831,52 @@ export function LobbyClient({ roomCode }: LobbyClientProps) {
           ) : null}
         </>
       )}
+
+      <section className="panel stack">
+        <h3>Main Track (52 cells)</h3>
+        {inLobby ? <p className="notice notice-info">Match not started yet. This is the live board layout.</p> : null}
+        <div className="board-scroll">
+          <div className="ludo-board" role="grid" aria-label="Ludo main track">
+            <div className="ludo-home ludo-home-red" />
+            <div className="ludo-home ludo-home-green" />
+            <div className="ludo-home ludo-home-yellow" />
+            <div className="ludo-home ludo-home-blue" />
+            <div className="ludo-center" />
+
+            {MAIN_TRACK_COORDINATES.map(({ cell, row, col }) => {
+              const occupants = trackOccupants.get(cell) ?? [];
+              const isHighlighted = highlightedCells.includes(cell);
+              return (
+                <div
+                  key={cell}
+                  data-testid={`track-cell-${cell}`}
+                  className={`board-cell board-track-cell ${SAFE_CELLS.has(cell) ? 'board-cell-safe' : ''} ${isHighlighted ? 'board-cell-highlight' : ''}`}
+                  style={{ gridRowStart: row, gridColumnStart: col }}
+                >
+                  <div style={{ fontSize: 11, color: '#7a6455' }}>#{cell}</div>
+                  <div className="token-dots-row">
+                    {occupants.map((token) => (
+                      <span
+                        key={`${token.playerName}-${token.tokenIndex}`}
+                        title={`${token.playerName} token ${token.tokenIndex + 1}`}
+                        className="token-dot"
+                        style={{
+                          width: 14,
+                          height: 14,
+                          borderRadius: 999,
+                          background: COLOR_STYLE[token.color],
+                          display: 'inline-block',
+                          boxShadow: isHighlighted ? '0 0 0 2px rgba(241, 143, 1, 0.35)' : 'none',
+                        }}
+                      />
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </section>
 
       <section className="panel stack">
         <h3>QR Invite</h3>
